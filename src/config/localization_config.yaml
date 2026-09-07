@@ -1,0 +1,170 @@
+# Localization Algorithm Configuration
+# GPS-Denied Visual Localization System
+
+# Global Localization Pipeline (Milestone 9+)
+visual_place_recognition:
+  enabled: true
+  model_type: "dino_v2"              # VPR model: dino_v2, clip, place_recognition
+
+  # Feature extraction
+  embedding_dim: 1024                # Embedding dimension
+
+  # Candidate retrieval
+  top_k_candidates: 10               # Return top-10 location candidates
+  confidence_threshold: 0.3           # Min confidence to include candidate
+
+  # Performance
+  inference_timeout_sec: 5.0
+  batch_size: 1
+
+# Geometric Verification (Milestone 10+)
+geometric_verification:
+  enabled: true
+
+  # Multi-building matching
+  min_buildings_to_match: 2          # Require matching ≥2 buildings
+  min_match_score: 0.5               # Minimum geometric match score
+
+  # Spatial constraints
+  distance_tolerance_percent: 15     # Allow ±15% error in observed distances
+  bearing_tolerance_deg: 10          # Allow ±10° error in bearings
+  height_tolerance_percent: 20       # Allow ±20% error in height estimates
+
+  # Depth-based verification
+  use_depth_verification: true
+  depth_match_tolerance_m: 2.0       # Allow ±2 m depth error
+
+  # Performance
+  max_candidates_to_verify: 5        # Only verify top-5 candidates
+
+# Pose Estimation (Milestone 10+)
+pose_estimation:
+  method: "opencv_pnp_ransac"        # opencv_pnp_ransac, iterative_closest_point, hybrid
+
+  # PnP Configuration
+  pnp_solver: "SOLVEPNP_ITERATIVE"  # OpenCV solver method
+  use_extrinsic_guess: true
+
+  # RANSAC Parameters
+  ransac_threshold_px: 8.0           # Pixel distance threshold
+  ransac_iterations: 10000
+  ransac_confidence: 0.999
+
+  # Outlier rejection
+  min_inliers_for_success: 10        # Minimum inlier count
+  inlier_fraction_threshold: 0.5     # Inliers must be > 50% of matches
+
+  # Performance
+  timeout_sec: 2.0
+
+# Confidence Estimation
+confidence:
+  # Weighting factors for overall confidence
+  vpr_weight: 0.3                    # Visual Place Recognition score
+  geometric_weight: 0.4              # Geometric verification quality
+  tracking_weight: 0.2               # Tracking consistency
+  map_coverage_weight: 0.1           # Map density at location
+
+  # Relocalization triggers
+  relocalization_threshold: 0.4      # Trigger global loc if confidence < 40%
+  tracking_lost_timeout_sec: 3.0     # Trigger relocalization if lost for 3 sec
+
+# Local Tracking (Milestone 11+)
+tracking:
+  method: "feature_tracking"         # feature_tracking, depth_tracking, fusion
+
+  # Feature Tracking
+  feature_detector: "superpoint"     # superpoint, orb, akaze
+  feature_matcher: "superglie"       # superglue, flann, bf
+  min_tracked_features: 20           # Alert if fewer than 20 features
+  max_tracking_distance: 50          # Max pixels a feature can move
+
+  # Depth Tracking
+  use_depth_tracking: true
+  depth_tracking_method: "icp"       # icp, point_to_plane, photometric
+
+  # IMU Integration
+  use_imu_prediction: true
+  imu_process_noise: [0.01, 0.01]    # Motion model noise
+  imu_measurement_noise: [0.1, 0.1]  # IMU measurement noise
+
+  # Kalman Filter (if used)
+  use_kalman_filter: true
+  state_transition_noise: 0.1
+  measurement_noise: 0.5
+
+  # Performance
+  tracking_frequency_hz: 30
+  timeout_sec: 1.0
+
+# IMU Integration
+imu:
+  # Sensor biases (estimated during initialization)
+  accel_bias: [0.0, 0.0, 0.0]       # m/s² bias
+  gyro_bias: [0.0, 0.0, 0.0]        # rad/s bias
+
+  # Noise parameters
+  accel_noise_std: 0.05              # m/s² standard deviation
+  gyro_noise_std: 0.01               # rad/s standard deviation
+  accel_bias_std: 0.001
+  gyro_bias_std: 0.001
+
+  # Pre-integration (for visual-inertial odometry)
+  use_preintegration: false          # Enable pre-integration (future)
+  preintegration_method: "gtsam"     # gtsam, g2o
+
+# Map Database Configuration
+map:
+  # Map sources
+  providers: ["openstreetmap"]       # [openstreetmap, 2gis, ...]
+
+  # Map caching
+  cache_buildings: true
+  cache_roads: true
+  cache_pois: true
+  cache_dir: ./data/maps
+  cache_ttl_days: 30                 # Cache valid for 30 days
+
+  # Search parameters
+  search_radius_m: 500               # Load map data within N meters
+  search_radius_expansion: 1000      # Expand search for candidate verification
+
+# Coordinate Systems
+coordinate_system:
+  # Global frame
+  global_frame: "wgs84"              # wgs84 (lat/lon/alt)
+
+  # Local frame
+  local_frame: "enu"                 # enu (East-North-Up)
+  local_origin_lat: 54.0            # Placeholder, updated at runtime
+  local_origin_lon: 25.0            # Placeholder, updated at runtime
+
+  # Height datum
+  height_datum: "msl"                # msl (Mean Sea Level) or ellipsoid
+
+# Evaluation & Ground Truth
+evaluation:
+  collect_ground_truth: true         # Collect GPS/manual ground truth
+  ground_truth_log: ./data/evaluation/gt_poses.csv
+
+  # Evaluation metrics
+  calculate_position_error: true
+  calculate_orientation_error: true
+  calculate_trajectory_error: true
+
+  # Performance targets (initial prototype)
+  position_error_target_m: 50.0      # Proof of concept: < 50 m
+  orientation_error_target_deg: 5.0
+
+  # Better targets (for reference)
+  position_error_good_m: 10.0
+  position_error_advanced_m: 5.0
+
+# Debug & Visualization
+debug:
+  verbose: false                     # Extra logging
+  visualize_candidates: false        # Display candidate locations
+  visualize_tracking: false          # Display tracked features
+  visualize_matches: false           # Display feature matches
+  save_debug_images: false           # Save intermediate images to disk
+  debug_output_dir: ./debug_output
