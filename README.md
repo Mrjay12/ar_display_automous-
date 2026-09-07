@@ -54,7 +54,40 @@ This is a **research prototype** demonstrating:
 
 ### Running Milestone 1 Tests
 
-**Run all 14 acceptance tests:**
+**✨ NEW: Single command to run everything:**
+```bash
+python main.py
+```
+
+This automatically:
+1. Detects your OAK-D Pro camera
+2. Records a 10-second dataset
+3. Replays the dataset to verify it works
+
+**Quick commands:**
+```bash
+# Show all options
+python main.py --help
+
+# Test camera only
+python main.py --test-only
+
+# Record for 5 minutes
+python main.py --record 300
+
+# Replay latest dataset
+python main.py --replay
+
+# Record with custom output
+python main.py --record 300 --output my_recording
+
+# List all 14 acceptance tests
+python main.py --list-tests
+```
+
+**For Windows users:** See `QUICKSTART.md` for Windows-specific examples and troubleshooting.
+
+**Run all 14 acceptance tests individually:**
 ```bash
 python scripts/run_all_acceptance_tests.py
 ```
@@ -74,10 +107,10 @@ python tests/test_depth_accuracy.py
 # IMU
 python tests/test_imu_acquisition.py --duration 300
 
-# Record dataset
+# Record dataset (alternative to main.py)
 python scripts/record_dataset.py --duration 300 --output data/recordings/my_dataset
 
-# Replay dataset (no camera needed)
+# Replay dataset (alternative to main.py)
 python scripts/replay_dataset.py --dataset data/recordings/my_dataset
 ```
 
@@ -93,6 +126,8 @@ Edit `src/config/camera_config.yaml` to adjust:
 
 ```
 ar_display_autonomous/
+├── main.py                  # ✨ NEW: Unified entry point (run everything)
+├── QUICKSTART.md            # ✨ Quick start for Windows users
 ├── ARCHITECTURE.md          # Complete system architecture
 ├── MILESTONE_1.md           # Milestone 1 detailed spec
 ├── README.md                # This file
