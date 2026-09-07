@@ -1,0 +1,117 @@
+# OAK-D Pro Camera Configuration
+# GPS-Denied Visual Localization System
+
+camera:
+  # Device selection
+  device_id: null              # null = auto-detect first device
+
+  # RGB Camera Settings
+  rgb:
+    enabled: true
+    fps: 30                     # Frames per second (15, 20, 24, 25, 30)
+    resolution: [1280, 720]     # [width, height] options: [1280, 720], [1920, 1080], [4K]
+    isp_scale: [2, 3]           # ISP scaling for lower latency
+
+  # Stereo Cameras
+  stereo:
+    enabled: true
+    fps: 30                     # Must match RGB for synchronization
+    resolution: [640, 400]      # [width, height] - typically smaller than RGB
+
+  # Depth Generation
+  depth:
+    enabled: true
+    median_filter: true         # Enable temporal median filtering
+    spatial_filter: true        # Enable spatial smoothing
+    depth_align_to_rgb: true    # Align depth with RGB frame
+    extended_disparity: false   # Extended disparity mode (better far range)
+    subpixel_mode: false        # Subpixel mode (better accuracy)
+
+  # IMU Configuration
+  imu:
+    enabled: true
+    report_rate: 200            # Hz (sampling rate)
+    batch_report_threshold: 5   # Number of reports to batch
+
+  # Camera-to-Camera Synchronization
+  sync:
+    sync_to_depth: true         # Sync RGB to depth
+    depth_align_to_rgb: true    # Align depth frames to RGB
+
+# Recording Configuration
+recording:
+  enabled: false                # Set to true to record on startup
+  output_dir: ./data/recordings # Dataset storage location
+
+  # What to record
+  record_rgb: true
+  record_stereo: true
+  record_depth: true
+  record_imu: true
+  record_calibration: true      # Auto-save calibration with dataset
+
+  # Recording parameters
+  duration_sec: 300             # Default duration (seconds)
+  compression_level: 9          # PNG compression (0-9)
+
+# GPS Configuration (Development Only!)
+gps:
+  enabled: false
+
+  # Serial Port Settings (for laptop GPS)
+  port: /dev/ttyUSB0            # Linux/Mac: /dev/tty*, Windows: COM3
+  baud_rate: 115200
+  timeout_sec: 2
+
+  # How GPS is used
+  use_for_localization: false   # CRITICAL: Must ALWAYS be false in production
+  use_for_search_region: true   # Limit map search to GPS area during development
+  use_for_ground_truth: true    # Collect for algorithm evaluation
+  ground_truth_log: ./data/evaluation/gps_ground_truth.csv
+
+  # GPS search region parameters
+  search_radius_m: 1000         # Search within N meters of GPS position
+
+# Logging Configuration
+logging:
+  level: INFO                   # DEBUG, INFO, WARNING, ERROR
+  console_output: true
+  file_output: true
+  log_dir: ./logs
+  log_file_prefix: oak_d_
+
+# Performance Monitoring
+monitoring:
+  enabled: true
+  log_interval_sec: 5          # Log metrics every N seconds
+  track_memory: true
+  track_cpu: true
+  track_fps: true
+
+  # Alert thresholds
+  alert_memory_mb: 500         # Alert if RAM > 500 MB
+  alert_cpu_percent: 80        # Alert if CPU > 80%
+  alert_frame_drop_rate: 0.01  # Alert if > 1% frames dropped
+
+# Sensor Validation
+validation:
+  check_calibration: true      # Verify calibration on startup
+  check_sync: true             # Verify synchronization quality
+  check_timestamp_continuity: true
+
+  # Acceptable ranges
+  min_depth_mm: 100            # Minimum depth (stereo limitation)
+  max_depth_mm: 5000           # Maximum depth
+  max_frame_drop_percent: 1.0  # Allow max 1% frame drops
+  max_timestamp_gap_ms: 100    # Alert if frame interval > 100 ms
+
+# Data Storage
+storage:
+  calibration_dir: ./data/calibrations
+  recording_dir: ./data/recordings
+  map_cache_dir: ./data/maps
+  evaluation_dir: ./data/evaluation
+
+  # Auto-organization
+  organize_by_date: true       # Create date-based subdirectories
+  organize_by_device: true     # Create device-serial subdirectories
