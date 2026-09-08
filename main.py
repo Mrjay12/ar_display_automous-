@@ -91,6 +91,18 @@ Examples:
         action="store_true",
         help="List all 14 acceptance tests and exit",
     )
+    parser.add_argument(
+        "--ar-demo",
+        action="store_true",
+        help="Run autonomous AR visualization demo (requires M4-9 completion)",
+    )
+    parser.add_argument(
+        "--ar-mode",
+        type=str,
+        default="overlay",
+        choices=["camera", "overlay", "map", "navigation", "debug"],
+        help="AR display mode (default: overlay)",
+    )
 
     args = parser.parse_args()
 
@@ -107,6 +119,13 @@ Examples:
     if args.list_tests:
         list_acceptance_tests()
         return 0
+
+    # Run AR demo if requested
+    if args.ar_demo:
+        logger.info("\n[AR DEMO] Autonomous AR Visualization")
+        logger.info("-" * 70)
+        success = run_ar_demo(args.ar_mode)
+        return 0 if success else 1
 
     # Determine what to run
     run_test = args.test_only or args.all or (not args.record and not args.replay)
@@ -329,6 +348,104 @@ def list_acceptance_tests():
         print(f"  {test}")
     print("=" * 70)
     print("\nFor detailed specs, see: MILESTONE_1.md")
+
+
+def run_ar_demo(ar_mode="overlay"):
+    """Run autonomous AR visualization demo (Milestones 10-12)."""
+    logger = get_logger(__name__)
+    try:
+        from ar.ar_compositor import ARCompositor, ARMode
+        from camera.sensor_replay import SensorReplayer
+        import cv2
+
+        # Find latest dataset
+        dataset_path = find_latest_dataset()
+        if not dataset_path:
+            logger.error("No dataset found for AR demo. Please record data first.")
+            return False
+
+        logger.info(f"Loading dataset: {dataset_path}")
+        replayer = SensorReplayer(dataset_path)
+
+        # Initialize AR compositor with mock data
+        logger.info("Initializing AR compositor...")
+        compositor = ARCompositor()
+
+        # Use mock camera calibration and origin
+        import numpy as np
+        K = np.array([
+            [1395.6, 0.0, 640.0],
+            [0.0, 1395.8, 360.0],
+            [0.0, 0.0, 1.0]
+        ], dtype=np.float32)
+        local_origin = (54.687381, 25.279652, 125.5)
+        compositor.initialize(K, None, local_origin)
+
+        # Set AR mode
+        mode_map = {
+            "camera": ARMode.CAMERA_ONLY,
+            "overlay": ARMode.AR_OVERLAY,
+            "map": ARMode.MAP_VIEW,
+            "navigation": ARMode.NAVIGATION,
+            "debug": ARMode.DEBUG,
+        }
+        compositor.config.ar_mode = mode_map.get(ar_mode, ARMode.AR_OVERLAY)
+
+        logger.info(f"AR Demo Mode: {ar_mode}")
+        logger.info("Press 'q' to exit, 'space' to pause/resume")
+
+        # Mock pose (would come from localization in real system)
+        class MockPose:
+            timestamp_us = 0
+            latitude = 54.687381
+            longitude = 25.279652
+            altitude = 125.5
+            roll_deg = 0.0
+            pitch_deg = 0.0
+            yaw_deg = 0.0
+
+        mock_pose = MockPose()
+
+        # Demo loop
+        frame_count = 0
+        paused = False
+
+        while frame_count < min(100, replayer.get_frame_count()):
+            if not paused:
+                rgb = replayer.get_rgb_frame()
+                if rgb is None:
+                    break
+
+                # Render AR frame
+                ar_frame = compositor.render_frame(rgb, mock_pose)
+
+                # Display
+                cv2.imshow("AR Demo", ar_frame)
+                frame_count += 1
+
+                # Log progress
+                if frame_count % 30 == 0:
+                    stats = compositor.get_statistics()
+                    logger.info(
+                        f"Frame {frame_count}: FPS={stats['fps']:.1f}, "
+                        f"Latency={stats['latency_ms']:.1f}ms"
+                    )
+
+            # Handle keyboard
+            key = cv2.waitKey(33) & 0xFF
+            if key == ord('q'):
+                break
+            elif key == ord(' '):
+                paused = not paused
+
+        cv2.destroyAllWindows()
+        logger.info(f"✓ AR Demo completed: {frame_count} frames rendered")
+        return True
+
+    except Exception as e:
+        logger = get_logger(__name__)
+        logger.error(f"AR demo failed: {e}")
+        return False
 
 
 if __name__ == "__main__":
