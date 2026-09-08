@@ -36,7 +36,7 @@ mypy>=1.5.0                 # Type checking
 python-dotenv>=1.0.0        # Environment configuration
 
 # 3D Processing (for future milestones)
-open3d>=0.17.0              # 3D data processing
+# open3d>=0.17.0            # 3D data processing (Python 3.14+ not supported; uncomment for Python 3.12/3.13)
 trimesh>=3.21.0             # Mesh processing
 
 # Optional: Deep Learning (for VPR in later milestones)
