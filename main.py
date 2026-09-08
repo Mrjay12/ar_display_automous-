@@ -2,16 +2,15 @@
 """
 Unified entry point for GPS-Denied Visual Localization & AR Mapping System.
 
-Single command to run all device detection, recording, replay, and testing.
-No need to remember multiple script names or arguments.
+Single command to run live localization, testing, recording, or replay.
 
 Usage:
+    python main.py                     # Live localization (default)
     python main.py --help              # Show all options
-    python main.py                     # Auto-detect and run full pipeline
     python main.py --test-only         # Run device detection test only
     python main.py --record 300        # Record 300-second dataset only
     python main.py --replay            # Replay last recorded dataset
-    python main.py --all               # Full pipeline (same as default)
+    python main.py --ar-demo           # AR visualization demo
 """
 
 import argparse
@@ -33,11 +32,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python main.py                    # Full pipeline (detect → record → replay)
-  python main.py --test-only        # Device detection only
-  python main.py --record 300       # Record 5-minute dataset
-  python main.py --replay           # Replay last dataset
-  python main.py --all              # Explicit full pipeline
+  python main.py                              # Live localization (default)
+  python main.py --live-localize              # Same as default
+  python main.py --live-localize -localize-duration 300  # 5 min localization
+  python main.py --test-only                  # Device detection only
+  python main.py --record 30                  # Record 30-second dataset
+  python main.py --replay                     # Replay last dataset
+  python main.py --ar-demo                    # AR visualization demo
         """,
     )
 
@@ -127,9 +128,11 @@ Examples:
     logger.info("GPS-Denied Visual Localization & AR Mapping System")
     logger.info("=" * 70)
 
-    # If no arguments provided, show interactive menu
+    # If no arguments provided, run live localization (default behavior)
     if len(sys.argv) == 1:
-        return show_interactive_menu()
+        logger.info("\n[DEFAULT] Running live localization...")
+        logger.info("-" * 70)
+        return run_live_localization(duration_sec=60)
 
     # List acceptance tests if requested
     if args.list_tests:
