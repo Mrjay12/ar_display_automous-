@@ -103,6 +103,18 @@ Examples:
         choices=["camera", "overlay", "map", "navigation", "debug"],
         help="AR display mode (default: overlay)",
     )
+    parser.add_argument(
+        "--live-localize",
+        action="store_true",
+        help="Real-time localization on camera feed (no recording needed)",
+    )
+    parser.add_argument(
+        "--localize-duration",
+        type=int,
+        default=60,
+        metavar="SECONDS",
+        help="Duration for live localization (default: 60 seconds, 0 = infinite)",
+    )
 
     args = parser.parse_args()
 
@@ -129,6 +141,13 @@ Examples:
         logger.info("\n[AR DEMO] Autonomous AR Visualization")
         logger.info("-" * 70)
         success = run_ar_demo(args.ar_mode)
+        return 0 if success else 1
+
+    # Run live localization if requested
+    if args.live_localize:
+        logger.info("\n[LIVE LOCALIZATION] Real-time Camera Localization")
+        logger.info("-" * 70)
+        success = run_live_localization(args.localize_duration)
         return 0 if success else 1
 
     # Determine what to run
@@ -514,6 +533,118 @@ def run_ar_demo(ar_mode="overlay"):
     except Exception as e:
         logger = get_logger(__name__)
         logger.error(f"AR demo failed: {e}")
+        return False
+
+
+def run_live_localization(duration_sec=60):
+    """Run real-time localization on live camera feed (no recording)."""
+    logger = get_logger(__name__)
+    try:
+        from camera.oak_d_interface import OAKDInterface
+        from mapping.map_3d_loader import Map3DLoader
+        from localization.realtime_localizer import RealtimeLocalizer
+        import cv2
+
+        logger.info("Initializing camera...")
+        camera = OAKDInterface()
+
+        logger.info("Loading 3D maps...")
+        loader = Map3DLoader()
+        # Try to load pre-downloaded maps; if not available, use empty
+        map_files = [
+            "data/maps/buildings.geojson",
+            "data/maps/buildings_3d.geojson",
+        ]
+        for map_file in map_files:
+            from pathlib import Path
+            if Path(map_file).exists():
+                loader.load_geojson(map_file)
+                logger.info(f"✓ Loaded maps from {map_file}")
+                break
+        else:
+            logger.warning("No 3D maps found. Localization will use detection only.")
+
+        # Initialize localizer
+        logger.info("Initializing real-time localizer...")
+        localizer = RealtimeLocalizer(camera, loader)
+
+        logger.info(f"Starting live localization for {duration_sec}s")
+        logger.info("Press 'q' to stop, 'p' to pause/resume")
+        logger.info("=" * 70)
+
+        frame_count = 0
+        paused = False
+        max_frames = duration_sec * 30 if duration_sec > 0 else float('inf')
+
+        for result in localizer.localize_continuous(duration_sec):
+            if not paused:
+                frame_count += 1
+
+                # Log localization result
+                if result.tracking_status == "tracking":
+                    logger.info(
+                        f"Frame {frame_count}: "
+                        f"Lat={result.pose.latitude:.6f} Lon={result.pose.longitude:.6f} "
+                        f"Alt={result.pose.altitude:.1f}m | "
+                        f"Confidence={result.confidence:.2f} | "
+                        f"Time: VPR={result.vpr_time_ms:.1f}ms Geom={result.geometric_time_ms:.1f}ms "
+                        f"Pose={result.pose_time_ms:.1f}ms"
+                    )
+                else:
+                    logger.warning(
+                        f"Frame {frame_count}: Status={result.tracking_status} "
+                        f"(VPR={result.vpr_time_ms:.1f}ms)"
+                    )
+
+                # Check if max frames reached
+                if frame_count >= max_frames:
+                    logger.info(f"Reached target duration ({duration_sec}s)")
+                    break
+
+            # Get RGB frame for display (if available)
+            try:
+                rgb = camera.get_rgb_frame()
+                if rgb is not None:
+                    # Add pose text overlay if tracking
+                    if result.tracking_status == "tracking":
+                        text = f"Lat:{result.pose.latitude:.4f} Lon:{result.pose.longitude:.4f} Conf:{result.confidence:.2f}"
+                        cv2.putText(rgb, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    else:
+                        cv2.putText(rgb, result.tracking_status.upper(), (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+                    cv2.imshow("Live Localization", rgb)
+            except:
+                pass
+
+            # Handle keyboard
+            try:
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):
+                    logger.info("Stopping localization...")
+                    break
+                elif key == ord('p'):
+                    paused = not paused
+                    logger.info(f"Localization {'paused' if paused else 'resumed'}")
+            except:
+                pass
+
+        cv2.destroyAllWindows()
+        camera.shutdown()
+
+        # Final statistics
+        stats = localizer.get_statistics()
+        logger.info("=" * 70)
+        logger.info(f"✓ Live localization complete: {frame_count} frames processed")
+        logger.info(f"  Status: {stats['tracking_status']}")
+        if stats['last_pose']:
+            logger.info(f"  Final pose: ({stats['last_pose']['latitude']:.6f}, {stats['last_pose']['longitude']:.6f})")
+        return True
+
+    except Exception as e:
+        logger = get_logger(__name__)
+        logger.error(f"Live localization failed: {e}")
+        import traceback
+        logger.exception(traceback.format_exc())
         return False
 
 
