@@ -165,14 +165,30 @@ class MapManager:
             return []
 
         lat, lon = self._current_location[:2]
+        buildings = []
 
-        # TODO: Implement spatial query
-        # - Search loaded tiles
-        # - Return buildings within distance_m
-        # - Sort by distance
-        # - Apply limit if specified
+        # Collect buildings from all loaded tiles
+        for tile in self._tiles.values():
+            for building in tile.buildings:
+                # Compute approximate distance (simplified haversine)
+                dlat = (building.latitude - lat) * 111000.0
+                dlon = (building.longitude - lon) * 111000.0 * np.cos(np.radians(lat))
+                distance = np.sqrt(dlat**2 + dlon**2)
 
-        return []  # Stub
+                if distance <= distance_m:
+                    buildings.append((distance, building))
+
+        # Sort by distance
+        buildings.sort(key=lambda x: x[0])
+
+        # Extract building objects only
+        result = [b[1] for b in buildings]
+
+        # Apply limit
+        if limit:
+            result = result[:limit]
+
+        return result
 
     def get_roads_in_view(
         self,
