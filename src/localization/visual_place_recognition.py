@@ -195,27 +195,47 @@ class VisualPlaceRecognizer:
             )
 
         try:
-            # TODO: Step 1: Extract DINOv2 embedding from frame
-            # embedding = self._extract_embedding(frame)
+            # Step 1: Extract DINOv2 embedding from frame
+            embedding = self._extract_embedding(frame)
 
-            # TODO: Step 2: Retrieve similar locations from index
-            # candidates = self._retrieve_candidates(embedding, search_region)
+            if embedding is None or len(embedding) == 0:
+                logger.debug(f"[Frame {frame_id}] Failed to extract embedding")
+                return PlaceRecognitionResult(
+                    timestamp_us=timestamp_us,
+                    frame_id=frame_id,
+                    candidates=[],
+                    embedding=None,
+                    best_candidate=None,
+                    search_radius_m=0.0
+                )
 
-            # TODO: Step 3: Score and rank candidates
-            # ranked = self._rank_candidates(candidates, embedding)
+            # Step 2: Retrieve similar locations from index
+            candidates = self._retrieve_candidates(embedding, search_region)
+
+            # Step 3: Score and rank candidates
+            ranked_candidates = self._rank_candidates(candidates, embedding)
+
+            # Determine best candidate and search radius
+            best_candidate = ranked_candidates[0] if ranked_candidates else None
+            search_radius = 500.0 if best_candidate else 0.0
 
             elapsed_ms = (time.time() - start_time) * 1000.0
 
-            logger.debug(f"[Frame {frame_id}] VPR completed in {elapsed_ms:.2f} ms")
+            if ranked_candidates:
+                logger.debug(
+                    f"[Frame {frame_id}] VPR found {len(ranked_candidates)} candidates "
+                    f"in {elapsed_ms:.2f} ms (top: {best_candidate.confidence:.2f})"
+                )
+            else:
+                logger.debug(f"[Frame {frame_id}] VPR found no candidates in {elapsed_ms:.2f} ms")
 
-            # Return empty result for now (stub implementation)
             return PlaceRecognitionResult(
                 timestamp_us=timestamp_us,
                 frame_id=frame_id,
-                candidates=[],
-                embedding=None,
-                best_candidate=None,
-                search_radius_m=0.0
+                candidates=ranked_candidates,
+                embedding=embedding,
+                best_candidate=best_candidate,
+                search_radius_m=search_radius
             )
 
         except Exception as e:
@@ -231,8 +251,23 @@ class VisualPlaceRecognizer:
 
     def _extract_embedding(self, frame: np.ndarray) -> np.ndarray:
         """Extract DINOv2 embedding from frame."""
-        # TODO: Implement embedding extraction
-        pass
+        # Placeholder: In production, use DINOv2 model
+        # For now, extract simple statistical features
+        if frame.size == 0:
+            return np.array([])
+
+        # Convert to grayscale if needed
+        if len(frame.shape) == 3:
+            gray = np.mean(frame.astype(np.float32), axis=2)
+        else:
+            gray = frame.astype(np.float32)
+
+        # Simple feature extraction (histogram-based)
+        # In production: replace with DINOv2 forward pass
+        hist, _ = np.histogram(gray, bins=64, range=(0, 256))
+        embedding = hist / (np.linalg.norm(hist) + 1e-6)  # L2 normalize
+
+        return embedding.astype(np.float32)
 
     def _retrieve_candidates(
         self,
@@ -240,8 +275,34 @@ class VisualPlaceRecognizer:
         search_region: Optional[Tuple[float, float, float]]
     ) -> List[Candidate]:
         """Retrieve candidate locations from index."""
-        # TODO: Implement similarity search
-        pass
+        if self._location_embeddings is None or len(self._location_embeddings) == 0:
+            logger.warning("No embeddings in index, returning empty candidates")
+            return []
+
+        # Compute similarity scores (cosine distance)
+        # Similarity = dot product of normalized vectors
+        similarities = np.dot(self._location_embeddings, embedding)
+
+        # Get top-K similar locations
+        top_indices = np.argsort(similarities)[-self.top_k:][::-1]
+
+        candidates = []
+        for idx in top_indices:
+            if idx < len(self._location_index):
+                loc_info = self._location_index[idx]
+                confidence = float(similarities[idx])
+
+                if confidence >= self.confidence_threshold:
+                    candidate = Candidate(
+                        latitude=loc_info.get('latitude', 0.0),
+                        longitude=loc_info.get('longitude', 0.0),
+                        confidence=np.clip(confidence, 0.0, 1.0),
+                        region_name=loc_info.get('name'),
+                        distance_m=loc_info.get('distance_m', 0.0),
+                    )
+                    candidates.append(candidate)
+
+        return candidates
 
     def _rank_candidates(
         self,
@@ -249,8 +310,9 @@ class VisualPlaceRecognizer:
         embedding: np.ndarray
     ) -> List[Candidate]:
         """Rank candidates by similarity and confidence."""
-        # TODO: Implement ranking and filtering
-        pass
+        # Sort by confidence descending
+        ranked = sorted(candidates, key=lambda c: c.confidence, reverse=True)
+        return ranked[:self.top_k]
 
     def get_statistics(self) -> dict:
         """Return VPR statistics."""
