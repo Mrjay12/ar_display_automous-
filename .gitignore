@@ -62,3 +62,20 @@ src/config/calibration.yaml
 *.tmp
 *.temp
 debug_output/
+
+# Ruflo/Claude Code system files and runtime data
+.env
+.env.local
+.env.*.local
+.claude-flow/
+.claude/
+.agents/
+.swarm/
+.mcp.json
+CLAUDE.md
+ruvector.db
+.unlazy/
+.unlazy-hook-state.json
+.claude/settings.local.json
+claudeflow_daemon.log
+*_session_*.json
