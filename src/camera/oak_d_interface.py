@@ -262,9 +262,9 @@ class OAKDInterface:
                 device_info = devices[0]
 
             self.device_info = {
-                "mxId": device_info.getMxId(),
-                "name": device_info.getDeviceName(),
-                "state": str(device_info.getState()),
+                "mxId": device_info.mxId,
+                "name": device_info.name,
+                "state": str(device_info.state),
             }
 
             logger.info(f"Device found: {self.device_info['name']} ({self.device_info['mxId']})")
