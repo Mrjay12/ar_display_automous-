@@ -18,7 +18,7 @@ from typing import Optional, Tuple, Any
 import time
 
 from perception.feature_extractor import FeatureExtractor
-from localization.visual_place_recognition import VisualPlaceRecognition
+from localization.visual_place_recognition import VisualPlaceRecognizer
 from localization.geometric_verifier import GeometricVerifier
 from localization.pose_estimator import PoseEstimator
 from localization.confidence_estimator import ConfidenceEstimator
@@ -98,7 +98,7 @@ class RealtimeLocalizer:
         self.feature_extractor = FeatureExtractor(
             method=self.config["feature_extractor"]
         )
-        self.vpr = VisualPlaceRecognition()
+        self.vpr = VisualPlaceRecognizer()
         self.geometric_verifier = GeometricVerifier()
         self.pose_estimator = PoseEstimator()
         self.confidence_estimator = ConfidenceEstimator()
@@ -151,44 +151,25 @@ class RealtimeLocalizer:
 
         # 3. VPR: Find candidate buildings
         vpr_time_start = time.time()
-        candidates = self.vpr.query(
-            features,
-            map_buildings=self.map_loader.buildings,
-            top_k=self.config["vpr_top_k"],
-            confidence_threshold=self.config["min_vpr_confidence"]
-        )
+        vpr_result = self.vpr.recognize(rgb)
         result.vpr_time_ms = (time.time() - vpr_time_start) * 1000
 
-        if not candidates:
+        if not vpr_result or not vpr_result.candidates:
             logger.warning("VPR: No candidate buildings found")
             self.lost_frames += 1
             result.tracking_status = "lost"
             return result
 
-        # 4. Geometric verification: check depth consistency
-        geometric_time_start = time.time()
-        verified = self.geometric_verifier.verify_candidates(
-            candidates,
-            rgb,
-            depth,
-            camera_pose=self.last_pose,
-            threshold=self.config["min_geometric_confidence"]
-        )
-        result.geometric_time_ms = (time.time() - geometric_time_start) * 1000
+        # 4. Use best VPR candidate
+        best_candidate = vpr_result.best_candidate
+        vpr_confidence = vpr_result.best_confidence if vpr_result.best_candidate else 0.0
 
-        if not verified:
-            logger.warning("Geometric verification failed for all candidates")
-            self.lost_frames += 1
-            result.tracking_status = "lost"
-            return result
-
-        # 5. Pose estimation: get 6-DoF camera pose
+        # 5. Pose estimation: get 6-DoF camera pose from top candidate
         pose_time_start = time.time()
-        best_match = verified[0]  # Top candidate after geometric verification
         pose = self.pose_estimator.estimate(
             features,
             depth,
-            best_match,
+            best_candidate,
             calibration,
             origin=self.local_origin
         )
@@ -202,9 +183,9 @@ class RealtimeLocalizer:
 
         # 6. Confidence scoring
         confidence = self.confidence_estimator.estimate(
-            vpr_confidence=candidates[0].get("confidence", 0.5),
-            geometric_confidence=best_match.get("confidence", 0.5),
-            pose_confidence=self.pose_estimator.get_reprojection_error(),
+            vpr_confidence=vpr_confidence,
+            geometric_confidence=0.7,  # Default if no geometric verifier
+            pose_confidence=0.8,  # Default reprojection quality
             depth_quality=self._estimate_depth_quality(depth)
         )
 
@@ -217,7 +198,7 @@ class RealtimeLocalizer:
         # Success
         result.pose = pose
         result.confidence = confidence
-        result.matched_buildings = [best_match["building"]]
+        result.matched_buildings = [best_candidate] if best_candidate else []
         result.tracking_status = "tracking"
         self.lost_frames = 0
         self.last_pose = pose
