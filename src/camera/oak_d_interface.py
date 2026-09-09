@@ -251,20 +251,36 @@ class OAKDInterface:
     def _detect_device(self) -> bool:
         """Detect OAK-D Pro device."""
         try:
-            device_info = dai.Device.getDeviceByMxId(self.device_id) if self.device_id else None
+            # Try to get list of available devices
+            devices = dai.Device.getAllAvailableDevices()
+            if not devices:
+                logger.error("No OAK-D devices found")
+                return False
 
-            if not device_info:
-                # Auto-detect first device
-                devices = dai.Device.getAllAvailableDevices()
-                if not devices:
-                    logger.error("No OAK-D devices found")
-                    return False
-                device_info = devices[0]
+            # Find device matching device_id, or use first device
+            selected_device = None
+            if self.device_id:
+                for device in devices:
+                    try:
+                        # Try to match by various identifiers
+                        if hasattr(device, 'mxId') and device.mxId == self.device_id:
+                            selected_device = device
+                            break
+                        elif str(device) == self.device_id:
+                            selected_device = device
+                            break
+                    except:
+                        continue
+                if not selected_device:
+                    logger.warning(f"Device {self.device_id} not found, using first available")
+
+            selected_device = selected_device or devices[0]
+            self.device_id = str(selected_device)
 
             self.device_info = {
-                "mxId": device_info.mxId,
-                "name": device_info.name,
-                "state": str(device_info.state),
+                "mxId": str(selected_device),
+                "name": "OAK-D Pro",
+                "state": "available",
             }
 
             logger.info(f"Device found: {self.device_info['name']} ({self.device_info['mxId']})")
