@@ -91,12 +91,12 @@ class RealtimeLocalizer:
             "min_geometric_confidence": 0.4,
             "min_pose_confidence": 0.5,
             "max_search_radius_m": 500,
-            "feature_extractor": "orb",  # orb, sift, akaze
+            "detector_type": "orb",  # orb or sift
         }
 
         # Initialize pipeline components
         self.feature_extractor = FeatureExtractor(
-            method=self.config["feature_extractor"]
+            detector_type=self.config["detector_type"]
         )
         self.vpr = VisualPlaceRecognizer()
         self.geometric_verifier = GeometricVerifier()
