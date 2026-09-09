@@ -550,6 +550,9 @@ def run_live_localization(duration_sec=60):
 
         logger.info("Initializing camera...")
         camera = OAKDInterface()
+        if not camera.initialize():
+            logger.error("Failed to initialize camera")
+            return False
 
         logger.info("Loading 3D maps...")
         loader = Map3DLoader()
