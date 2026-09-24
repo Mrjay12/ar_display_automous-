@@ -104,34 +104,7 @@ class OAKDInterface:
         try:
             self.pipeline = dai.Pipeline()
 
-            # Create color camera
-            cam_rgb = self.pipeline.create(dai.node.ColorCamera)
-            cam_rgb.setBoardSocket(dai.CameraBoardSocket.RGB)
-            cam_rgb.setPreviewSize(1280, 720)
-            cam_rgb.setFps(30)
-
-            # Create stereo depth
-            stereo = self.pipeline.create(dai.node.StereoDepth)
-
-            # Try to set preset - PresetMode may vary by depthai version
-            try:
-                # Try HIGH_DENSITY (common in older versions)
-                stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
-            except AttributeError:
-                try:
-                    # Try HIGH_DENSITY as direct attribute
-                    stereo.setDefaultProfilePreset(dai.node.StereoDepth.HIGH_DENSITY)
-                except AttributeError:
-                    try:
-                        # Try other common presets
-                        for preset_name in ['HIGH_DENSITY', 'HIGH_PRECISION', 'MEDIUM_DENSITY']:
-                            if hasattr(dai.node.StereoDepth, preset_name):
-                                stereo.setDefaultProfilePreset(getattr(dai.node.StereoDepth, preset_name))
-                                break
-                    except:
-                        logger.warning("Could not set stereo preset - using defaults")
-
-            # Mono cameras for stereo
+            # Mono cameras for stereo-based localization (no RGB color camera)
             mono_left = self.pipeline.create(dai.node.MonoCamera)
             mono_left.setBoardSocket(dai.CameraBoardSocket.LEFT)
             mono_left.setFps(30)
@@ -141,7 +114,6 @@ class OAKDInterface:
                 mono_left.setResolution(dai.MonoCameraProperties.SensorInfo.THE_400_P)
             except AttributeError:
                 try:
-                    # Try direct resolution (640x400)
                     mono_left.setResolution(640, 400)
                 except:
                     logger.warning("Could not set mono_left resolution - using default")
@@ -159,21 +131,39 @@ class OAKDInterface:
                 except:
                     logger.warning("Could not set mono_right resolution - using default")
 
-            # Link stereo cameras
+            # Create stereo depth from mono cameras
+            stereo = self.pipeline.create(dai.node.StereoDepth)
+
+            # Try to set preset - PresetMode may vary by depthai version
+            try:
+                stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
+            except AttributeError:
+                try:
+                    stereo.setDefaultProfilePreset(dai.node.StereoDepth.HIGH_DENSITY)
+                except AttributeError:
+                    try:
+                        for preset_name in ['HIGH_DENSITY', 'HIGH_PRECISION', 'MEDIUM_DENSITY']:
+                            if hasattr(dai.node.StereoDepth, preset_name):
+                                stereo.setDefaultProfilePreset(getattr(dai.node.StereoDepth, preset_name))
+                                break
+                    except:
+                        logger.warning("Could not set stereo preset - using defaults")
+
+            # Link stereo cameras to stereo depth node
             mono_left.out.link(stereo.left)
             mono_right.out.link(stereo.right)
 
-            # RGB output
-            xout_rgb = self.pipeline.create(dai.node.XLinkOut)
-            xout_rgb.setStreamName("rgb")
-            cam_rgb.video.link(xout_rgb.input)
+            # Stereo left output (for visual features/localization)
+            xout_left = self.pipeline.create(dai.node.XLinkOut)
+            xout_left.setStreamName("rgb")  # Use "rgb" stream name for compatibility
+            mono_left.out.link(xout_left.input)
 
             # Depth output
             xout_depth = self.pipeline.create(dai.node.XLinkOut)
             xout_depth.setStreamName("depth")
             stereo.depth.link(xout_depth.input)
 
-            logger.info("✓ Pipeline created successfully")
+            logger.info("✓ Pipeline created successfully (stereo cameras only)")
             return True
 
         except Exception as e:
