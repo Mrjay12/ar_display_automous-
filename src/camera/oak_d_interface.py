@@ -134,13 +134,30 @@ class OAKDInterface:
             # Mono cameras for stereo
             mono_left = self.pipeline.create(dai.node.MonoCamera)
             mono_left.setBoardSocket(dai.CameraBoardSocket.LEFT)
-            mono_left.setResolution(dai.MonoCameraProperties.SensorInfo.THE_400_P)
             mono_left.setFps(30)
+
+            # Try to set mono resolution - different depthai versions use different APIs
+            try:
+                mono_left.setResolution(dai.MonoCameraProperties.SensorInfo.THE_400_P)
+            except AttributeError:
+                try:
+                    # Try direct resolution (640x400)
+                    mono_left.setResolution(640, 400)
+                except:
+                    logger.warning("Could not set mono_left resolution - using default")
 
             mono_right = self.pipeline.create(dai.node.MonoCamera)
             mono_right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
-            mono_right.setResolution(dai.MonoCameraProperties.SensorInfo.THE_400_P)
             mono_right.setFps(30)
+
+            # Same resolution setting for mono_right
+            try:
+                mono_right.setResolution(dai.MonoCameraProperties.SensorInfo.THE_400_P)
+            except AttributeError:
+                try:
+                    mono_right.setResolution(640, 400)
+                except:
+                    logger.warning("Could not set mono_right resolution - using default")
 
             # Link stereo cameras
             mono_left.out.link(stereo.left)
