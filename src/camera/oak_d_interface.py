@@ -1,5 +1,5 @@
 """
-OAK-D Pro Hardware Interface - Factory pattern API (depthai 3.x+)
+OAK-D Pro Hardware Interface - depthai 3.x API
 """
 
 import logging
@@ -31,7 +31,7 @@ class StereoDepth:
 
 
 class OAKDInterface:
-    """OAK-D Pro interface for depthai 3.x+ (factory pattern API)."""
+    """OAK-D Pro interface for depthai 3.x using factory pattern."""
 
     def __init__(self, device_id: Optional[str] = None, config: Optional[dict] = None):
         self.device_id = device_id
@@ -100,14 +100,14 @@ class OAKDInterface:
             return False
 
     def _create_pipeline(self) -> bool:
-        """Create DepthAI pipeline using factory pattern."""
+        """Create DepthAI pipeline using depthai 3.x factory pattern."""
         try:
             self.pipeline = dai.Pipeline()
 
-            # Create color camera using factory pattern
+            # Create color camera
             cam_rgb = self.pipeline.create(dai.node.ColorCamera)
             cam_rgb.setBoardSocket(dai.CameraBoardSocket.RGB)
-            cam_rgb.setResolution(dai.ColorCameraProperties.SensorInfo.RGB_1280X720)
+            cam_rgb.setPreviewSize(1280, 720)
             cam_rgb.setFps(30)
 
             # Create stereo depth
@@ -129,11 +129,12 @@ class OAKDInterface:
             mono_left.out.link(stereo.left)
             mono_right.out.link(stereo.right)
 
-            # XLink outputs
+            # RGB output
             xout_rgb = self.pipeline.create(dai.node.XLinkOut)
             xout_rgb.setStreamName("rgb")
             cam_rgb.video.link(xout_rgb.input)
 
+            # Depth output
             xout_depth = self.pipeline.create(dai.node.XLinkOut)
             xout_depth.setStreamName("depth")
             stereo.depth.link(xout_depth.input)
