@@ -1,0 +1,239 @@
+"""
+Real-Time Localizer - Direct camera feed → localization (no recording)
+
+One-shot pipeline:
+  Camera Frame → VPR → Geometric Verification → Pose Estimation → Output
+
+No recording, no replay - instant localization on whatever the camera sees.
+"""
+
+import logging
+from typing import Optional, Tuple
+import time
+
+from perception.feature_extractor import FeatureExtractor
+from localization.visual_place_recognition import VisualPlaceRecognizer
+from localization.geometric_verifier import GeometricVerifier
+from localization.pose_estimator import PoseEstimator, CameraPose
+from localization.confidence_estimator import ConfidenceEstimator
+
+logger = logging.getLogger(__name__)
+
+
+class LocalizationResult:
+    """Output from real-time localization."""
+    def __init__(self):
+        self.pose = CameraPose()
+        self.confidence = 0.0
+        self.matched_buildings = []
+        self.tracking_status = "init"  # init, tracking, lost, relocalized
+        self.frame_time_ms = 0.0
+        self.vpr_time_ms = 0.0
+        self.geometric_time_ms = 0.0
+        self.pose_time_ms = 0.0
+
+
+class RealtimeLocalizer:
+    """
+    Real-time localization: camera frame → pose in one shot.
+
+    Pipeline:
+    1. Get frame from camera
+    2. Extract visual features (ORB/SIFT)
+    3. VPR: Find candidate buildings in geographic region
+    4. Geometric verification: Check depth consistency
+    5. Pose estimation: 6-DoF camera pose (lat/lon/alt + roll/pitch/yaw)
+    6. Confidence scoring: Multi-source fusion
+    """
+
+    def __init__(
+        self,
+        camera,
+        map_loader,
+        config: Optional[dict] = None,
+        local_origin: Tuple[float, float, float] = (53.9045, 27.5615, 125.5)
+    ):
+        """
+        Initialize real-time localizer.
+
+        Args:
+            camera: OAKDInterface instance for frame acquisition
+            map_loader: Map3DLoader with buildings/roads loaded
+            config: Optional config dict with tuning parameters
+            local_origin: (lat, lon, alt) reference point
+        """
+        self.camera = camera
+        self.map_loader = map_loader
+        self.local_origin = local_origin
+
+        # Default config
+        self.config = config or {
+            "vpr_top_k": 10,
+            "min_vpr_confidence": 0.3,
+            "min_geometric_confidence": 0.4,
+            "min_pose_confidence": 0.5,
+            "max_search_radius_m": 500,
+            "detector_type": "orb",
+        }
+
+        # Initialize pipeline components
+        self.feature_extractor = FeatureExtractor(
+            detector_type=self.config["detector_type"]
+        )
+        self.vpr = VisualPlaceRecognizer()
+        self.geometric_verifier = GeometricVerifier()
+        self.pose_estimator = PoseEstimator()
+        self.confidence_estimator = ConfidenceEstimator()
+
+        # State tracking
+        self.last_pose = None
+        self.tracking_status = "init"
+        self.frame_count = 0
+        self.lost_frames = 0
+        self.lost_threshold = 5
+
+        logger.info("RealtimeLocalizer initialized")
+
+    def localize_frame(self) -> LocalizationResult:
+        """
+        Localize camera on a single frame (real-time mode).
+
+        Steps:
+        1. Get RGB, depth, calibration from camera
+        2. VPR: Find matching buildings in map
+        3. Geometric: Verify depth consistency
+        4. Pose: Estimate 6-DoF camera pose
+        5. Confidence: Score the result
+
+        Returns:
+            LocalizationResult with pose, confidence, timing
+        """
+        result = LocalizationResult()
+        start_time = time.time()
+
+        # 1. Get frame from camera
+        frame_time_start = time.time()
+        rgb = self.camera.get_rgb_frame()
+        depth = self.camera.get_depth_frame()
+        calibration = self.camera.get_calibration()
+
+        if rgb is None:
+            logger.warning("No RGB frame available")
+            result.tracking_status = "init"
+            return result
+
+        result.frame_time_ms = (time.time() - frame_time_start) * 1000
+
+        # 2. Extract features
+        features = self.feature_extractor.extract(rgb.frame)
+        if not features or len(features.keypoints) == 0:
+            logger.warning("No features extracted from frame")
+            result.tracking_status = "init"
+            return result
+
+        # 3. VPR: Find candidate buildings
+        vpr_time_start = time.time()
+        vpr_result = self.vpr.recognize(rgb.frame)
+        result.vpr_time_ms = (time.time() - vpr_time_start) * 1000
+
+        if not vpr_result or not vpr_result.candidates:
+            logger.warning("VPR: No candidate buildings found")
+            self.lost_frames += 1
+            result.tracking_status = "lost"
+            return result
+
+        # 4. Use best VPR candidate
+        best_candidate = vpr_result.best_candidate
+        vpr_confidence = vpr_result.best_confidence if vpr_result.best_candidate else 0.0
+
+        # 5. Pose estimation
+        pose_time_start = time.time()
+        depth_array = depth.depth_map if depth else None
+        pose = self.pose_estimator.estimate(
+            features,
+            depth_array,
+            best_candidate,
+            calibration,
+            origin=self.local_origin
+        )
+        result.pose_time_ms = (time.time() - pose_time_start) * 1000
+
+        if pose is None:
+            logger.warning("Pose estimation failed")
+            self.lost_frames += 1
+            result.tracking_status = "lost"
+            return result
+
+        # 6. Confidence scoring
+        depth_quality = self.confidence_estimator.estimate_depth_quality(depth_array)
+        confidence = self.confidence_estimator.estimate(
+            vpr_confidence=vpr_confidence,
+            geometric_confidence=0.7,
+            pose_confidence=0.8,
+            depth_quality=depth_quality
+        )
+
+        if confidence < self.config["min_pose_confidence"]:
+            logger.warning(f"Low confidence: {confidence:.2f}")
+            self.lost_frames += 1
+            result.tracking_status = "lost"
+            return result
+
+        # Success
+        result.pose = pose
+        result.confidence = confidence
+        result.matched_buildings = [best_candidate] if best_candidate else []
+        result.tracking_status = "tracking"
+        self.lost_frames = 0
+        self.last_pose = pose
+
+        logger.info(
+            f"✓ Localized: ({pose.latitude:.4f}, {pose.longitude:.4f}) @ {confidence:.2f} confidence"
+        )
+
+        return result
+
+    def localize_continuous(self, duration_sec: float = 60.0):
+        """
+        Localize continuously on camera feed.
+
+        Streams pose estimates in real-time.
+
+        Args:
+            duration_sec: How long to run (0 = infinite)
+
+        Yields:
+            LocalizationResult for each frame
+        """
+        start_time = time.time()
+        self.frame_count = 0
+
+        logger.info(f"Starting continuous localization for {duration_sec}s")
+
+        while True:
+            # Check duration
+            if duration_sec > 0 and time.time() - start_time > duration_sec:
+                logger.info(f"Localization complete: {self.frame_count} frames")
+                break
+
+            # Localize single frame
+            result = self.localize_frame()
+            self.frame_count += 1
+
+            yield result
+
+            # Check for tracking loss
+            if self.lost_frames > self.lost_threshold:
+                logger.warning(f"Tracking lost for {self.lost_frames} frames")
+
+    def get_statistics(self) -> dict:
+        """Return localization statistics."""
+        return {
+            "frames_processed": self.frame_count,
+            "tracking_status": self.tracking_status,
+            "last_pose": {
+                "latitude": self.last_pose.latitude if self.last_pose else 0,
+                "longitude": self.last_pose.longitude if self.last_pose else 0,
+                "altitude": self.last_pose.altitude if self.last_pose else 0,
+            } if self.last_pose else None,
+        }
