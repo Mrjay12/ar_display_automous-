@@ -1,232 +1,84 @@
 """
-Global Pose Estimation Module - 6-DoF Camera Pose in WGS84 Coordinates
+Pose Estimator - Estimate 6-DoF camera pose from features and depth.
 
-Responsibilities:
-- Estimate camera position (latitude, longitude, altitude)
-- Estimate camera orientation (roll, pitch, yaw)
-- Use PnP with RANSAC for robust estimation
-- Transform between coordinate frames (GLOBAL→LOCAL→CAMERA→IMAGE)
-- Propagate covariance/uncertainty
+Outputs:
+- Geographic position (latitude, longitude, altitude)
+- Camera orientation (roll, pitch, yaw in degrees)
 
-Input:
-  - Verified geographic location (lat, lon)
-  - Detected visual features with descriptors
-  - Building 3D geometry and feature associations
-  - Camera calibration matrix
-  - Map reference elevation
-
-Output:
-  - Camera position: (latitude, longitude, altitude_msl)
-  - Camera orientation: (roll_deg, pitch_deg, yaw_deg)
-  - Pose covariance matrix
-  - Estimated uncertainty (meters, degrees)
-
-Performance:
-  - Feature matching: ~50-100 ms
-  - PnP + RANSAC: ~50-150 ms
-  - Total: ~100-250 ms per frame
-
-Failure Modes:
-  - Insufficient features (< 4): Cannot estimate pose
-  - Feature matching ambiguity: Lower confidence
-  - Outliers: RANSAC removes them, lowering inlier count
-  - Recovery: Use prior pose, incremental tracking
-
-Example:
-    >>> estimator = PoseEstimator(camera_calib=K, map_db=db)
-    >>> pose = estimator.estimate(location, features, buildings)
-    >>> print(f"Position: {pose.latitude:.6f}, {pose.longitude:.6f}, {pose.altitude:.1f}m")
-    >>> print(f"Orientation: {pose.roll:.1f}°, {pose.pitch:.1f}°, {pose.yaw:.1f}°")
-
-Reference:
-- Perspective-n-Point (PnP) problem
-- RANSAC robust estimation
-- Coordinate frame transformations (COORDINATE_FRAMES.md)
+Method:
+1. Match frame features to 3D building geometry
+2. Establish 2D-3D correspondences
+3. Solve PnP (Perspective-n-Point) to get camera pose
+4. Transform to geographic coordinates
 """
 
 import logging
-from typing import Optional, List, Tuple
+from typing import Optional
 from dataclasses import dataclass
-import time
 
 import numpy as np
+import cv2
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class CameraPose:
-    """6-DoF camera pose in geographic coordinates."""
-    timestamp_us: int
-    latitude: float       # WGS84 latitude (degrees)
-    longitude: float      # WGS84 longitude (degrees)
-    altitude: float       # Height above Mean Sea Level (meters)
-    roll_deg: float       # Roll angle (degrees, around X-axis)
-    pitch_deg: float      # Pitch angle (degrees, around Y-axis)
-    yaw_deg: float        # Yaw angle (degrees, around Z-axis)
-
-    # Covariance and uncertainty
-    position_covariance: Optional[np.ndarray]  # 3x3 covariance matrix
-    orientation_covariance: Optional[np.ndarray]  # 3x3 covariance matrix
-    position_uncertainty_m: float  # Position uncertainty (1-sigma)
-    orientation_uncertainty_deg: float  # Orientation uncertainty
-
-    # Estimation quality
-    inlier_ratio: float   # Ratio of RANSAC inliers
-    num_matched_points: int  # Number of matched 3D-2D points
-    reprojection_error_px: float  # RMS reprojection error
-
-    @property
-    def rotation_matrix(self) -> np.ndarray:
-        """Get rotation matrix from Euler angles (ZYX order)."""
-        # TODO: Compute rotation matrix from roll, pitch, yaw
-        pass
-
-    @property
-    def translation_vector(self) -> np.ndarray:
-        """Get translation vector (position in ENU frame)."""
-        # TODO: Compute from lat/lon/alt
-        pass
+    """Camera pose in world frame."""
+    latitude: float
+    longitude: float
+    altitude: float
+    roll_deg: float
+    pitch_deg: float
+    yaw_deg: float
+    timestamp_us: int = 0
 
 
 class PoseEstimator:
-    """
-    Estimate 6-DoF camera pose using PnP with RANSAC.
+    """Estimate 6-DoF camera pose from features and depth."""
 
-    Combines building 3D geometry, detected features, and
-    geometric constraints to estimate precise camera pose.
-    """
-
-    def __init__(
-        self,
-        camera_intrinsics: Optional[np.ndarray] = None,
-        map_database=None,
-        pnp_method: str = 'epnp',
-        ransac_iterations: int = 100,
-        ransac_threshold_px: float = 8.0,
-        min_inliers: int = 4,
-    ):
-        """
-        Initialize pose estimator.
-
-        Args:
-            camera_intrinsics: Camera matrix K (3x3)
-            map_database: Map provider with building geometry
-            pnp_method: PnP algorithm ('epnp', 'iterative', 'p3p')
-            ransac_iterations: RANSAC iteration count
-            ransac_threshold_px: RANSAC reprojection error threshold
-            min_inliers: Minimum inliers required for valid pose
-        """
-        self.camera_intrinsics = camera_intrinsics
-        self.map_database = map_database
-        self.pnp_method = pnp_method
-        self.ransac_iterations = ransac_iterations
-        self.ransac_threshold_px = ransac_threshold_px
-        self.min_inliers = min_inliers
-
-        self._pose_count = 0
-        self._successful_poses = 0
-        self._local_origin = None  # ENU origin (lat, lon, alt)
-
-        logger.info(
-            f"PoseEstimator initialized: "
-            f"pnp={pnp_method}, ransac_iters={ransac_iterations}"
-        )
+    def __init__(self):
+        logger.info("PoseEstimator initialized")
 
     def estimate(
         self,
-        location: Tuple[float, float],
-        features_current,
-        buildings_in_view,
-        timestamp_us: int = 0,
+        features,
+        depth_map,
+        building,
+        calibration,
+        origin: tuple = (53.9045, 27.5615, 125.5)
     ) -> Optional[CameraPose]:
         """
-        Estimate camera pose using PnP + RANSAC.
-
-        PROCESS:
-        1. Get 3D building geometry from map at location
-        2. Associate detected features with building features
-        3. Build 3D-2D point correspondences
-        4. Solve PnP with RANSAC
-        5. Refine using inliers
-        6. Convert to geographic coordinates
+        Estimate camera pose.
 
         Args:
-            location: (latitude, longitude) of scene center
-            features_current: Detected features in current frame
-            buildings_in_view: Buildings visible in scene
-            timestamp_us: Frame timestamp
+            features: Extracted features from frame
+            depth_map: Depth frame
+            building: 3D building candidate
+            calibration: Camera calibration
+            origin: (lat, lon, alt) reference point
 
         Returns:
-            CameraPose with estimated 6-DoF pose, or None if failed
+            CameraPose or None on failure
         """
-        start_time = time.time()
-        self._pose_count += 1
-
-        # Validate inputs
-        if features_current is None or len(features_current) < self.min_inliers:
-            logger.warning(
-                f"Insufficient features for PnP: {len(features_current) if features_current else 0}"
-            )
-            return None
-
-        if not buildings_in_view:
-            logger.warning("No buildings in view for pose estimation")
-            return None
-
         try:
-            # Simplified pose estimation for prototype
-            if features_current is None or len(features_current) < self.min_inliers:
-                logger.warning("Insufficient features for pose estimation")
+            if features is None or len(features.keypoints) == 0:
+                logger.warning("No features provided for pose estimation")
                 return None
 
-            if not buildings_in_view:
-                logger.warning("No buildings in view")
+            if depth_map is None:
+                logger.warning("No depth map provided for pose estimation")
                 return None
 
-            # Step 1-3: Generate synthetic correspondences (placeholder)
-            num_matches = min(len(features_current), 20)
-            if num_matches < self.min_inliers:
-                logger.warning(f"Not enough features: {num_matches}")
-                return None
-
-            # Step 4-5: Create pose estimate
-            lat, lon = location
-            altitude = 10.0  # Placeholder: estimated height
-
-            # Simplified orientation (upright camera)
-            roll_deg = float(np.random.normal(0, 5))  # Small roll variation
-            pitch_deg = float(np.random.normal(-5, 5))  # Slight tilt
-            yaw_deg = float(np.random.normal(0, 10))  # Heading variation
-
-            # Covariance matrices (simplified)
-            position_cov = np.eye(3) * 5.0  # 5m std dev
-            orientation_cov = np.eye(3) * 0.1  # ~3 degree std dev
-
-            # Create pose object
+            # Simple pose: return building center as estimated position
+            # In production: use PnP + depth to estimate actual camera pose
             pose = CameraPose(
-                timestamp_us=timestamp_us,
-                latitude=lat,
-                longitude=lon,
-                altitude=altitude,
-                roll_deg=roll_deg,
-                pitch_deg=pitch_deg,
-                yaw_deg=yaw_deg,
-                position_covariance=position_cov,
-                orientation_covariance=orientation_cov,
-                position_uncertainty_m=5.0,
-                orientation_uncertainty_deg=3.0,
-                inlier_ratio=0.8,
-                num_matched_points=num_matches,
-                reprojection_error_px=2.5,
-            )
-
-            self._successful_poses += 1
-
-            elapsed_ms = (time.time() - start_time) * 1000.0
-            logger.debug(
-                f"Pose estimation completed in {elapsed_ms:.2f} ms: "
-                f"({lat:.6f}, {lon:.6f}, {altitude:.1f}m)"
+                latitude=building.latitude if building else 0.0,
+                longitude=building.longitude if building else 0.0,
+                altitude=building.altitude if building else 0.0,
+                roll_deg=0.0,
+                pitch_deg=0.0,
+                yaw_deg=0.0
             )
 
             return pose
@@ -235,46 +87,91 @@ class PoseEstimator:
             logger.error(f"Pose estimation failed: {e}")
             return None
 
-    def _associate_features(
+    def _get_camera_matrix(self, calibration):
+        """Extract camera matrix from calibration."""
+        try:
+            if calibration is None:
+                # Default matrix for 640x400 resolution
+                fx = 300.0  # Focal length in x
+                fy = 300.0  # Focal length in y
+                cx = 320.0  # Principal point x
+                cy = 200.0  # Principal point y
+                return np.array([
+                    [fx, 0, cx],
+                    [0, fy, cy],
+                    [0, 0, 1]
+                ], dtype=np.float32)
+
+            # Extract from depthai calibration if available
+            return calibration.getCameraIntrinsics() if hasattr(
+                calibration, 'getCameraIntrinsics'
+            ) else None
+
+        except Exception as e:
+            logger.warning(f"Could not extract camera matrix: {e}")
+            return None
+
+    def _solve_pnp(
         self,
-        buildings_3d,
-        features_current
-    ) -> List[Tuple]:
-        """Associate detected features with 3D building features."""
-        # TODO: Implement feature association (descriptor matching)
-        pass
+        object_points,
+        image_points,
+        camera_matrix,
+        dist_coeffs=None
+    ) -> Optional[tuple]:
+        """
+        Solve PnP to estimate camera pose.
 
-    def _solve_pnp_ransac(
-        self,
-        points_3d: List[np.ndarray],
-        points_2d: List[np.ndarray]
-    ) -> Tuple[np.ndarray, np.ndarray, List[bool]]:
-        """Solve PnP problem with RANSAC."""
-        # TODO: Implement PnP + RANSAC solver
-        pass
+        Returns:
+            (rvec, tvec) or None on failure
+        """
+        try:
+            if len(object_points) < 4 or len(image_points) < 4:
+                return None
 
-    def _to_geographic(
-        self,
-        pose_camera_map: np.ndarray,
-        location_center: Tuple[float, float]
-    ) -> CameraPose:
-        """Convert camera pose from map frame to geographic coordinates."""
-        # TODO: Implement coordinate transformation
-        pass
+            if dist_coeffs is None:
+                dist_coeffs = np.zeros(5)
 
-    def set_local_origin(self, lat: float, lon: float, alt: float):
-        """Set ENU origin for coordinate transformations."""
-        self._local_origin = (lat, lon, alt)
-        logger.info(f"Local origin set: ({lat:.6f}, {lon:.6f}, {alt:.1f}m)")
+            success, rvec, tvec = cv2.solvePnP(
+                object_points,
+                image_points,
+                camera_matrix,
+                dist_coeffs,
+                useExtrinsicGuess=False,
+                flags=cv2.SOLVEPNP_EPNP
+            )
 
-    def get_statistics(self) -> dict:
-        """Return pose estimation statistics."""
-        success_rate = (
-            self._successful_poses / self._pose_count
-            if self._pose_count > 0 else 0.0
-        )
-        return {
-            'poses_estimated': self._pose_count,
-            'successful_poses': self._successful_poses,
-            'success_rate': success_rate,
-        }
+            if success:
+                return (rvec, tvec)
+            return None
+
+        except Exception as e:
+            logger.error(f"PnP solving failed: {e}")
+            return None
+
+    def _rotation_vector_to_euler(self, rvec) -> tuple:
+        """Convert rotation vector to Euler angles (roll, pitch, yaw in degrees)."""
+        try:
+            rotation_matrix, _ = cv2.Rodrigues(rvec)
+
+            # Extract Euler angles
+            sin_pitch = -rotation_matrix[2, 0]
+            sin_pitch = np.clip(sin_pitch, -1.0, 1.0)
+            pitch = np.arcsin(sin_pitch)
+
+            cos_pitch = np.cos(pitch)
+            if abs(cos_pitch) > 1e-6:
+                roll = np.arctan2(rotation_matrix[2, 1], rotation_matrix[2, 2])
+                yaw = np.arctan2(rotation_matrix[1, 0], rotation_matrix[0, 0])
+            else:
+                roll = 0.0
+                yaw = np.arctan2(-rotation_matrix[0, 1], rotation_matrix[1, 1])
+
+            return (
+                np.degrees(roll),
+                np.degrees(pitch),
+                np.degrees(yaw)
+            )
+
+        except Exception as e:
+            logger.warning(f"Euler angle conversion failed: {e}")
+            return (0.0, 0.0, 0.0)

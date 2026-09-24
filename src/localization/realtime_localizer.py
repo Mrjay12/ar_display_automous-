@@ -5,37 +5,19 @@ One-shot pipeline:
   Camera Frame → VPR → Geometric Verification → Pose Estimation → Output
 
 No recording, no replay - instant localization on whatever the camera sees.
-
-Example:
-    >>> localizer = RealtimeLocalizer(camera, map_loader)
-    >>> while True:
-    ...     pose, confidence = localizer.localize_frame()
-    ...     print(f"Location: {pose.latitude:.4f}, {pose.longitude:.4f}")
 """
 
 import logging
-from typing import Optional, Tuple, Any
+from typing import Optional, Tuple
 import time
 
 from perception.feature_extractor import FeatureExtractor
 from localization.visual_place_recognition import VisualPlaceRecognizer
 from localization.geometric_verifier import GeometricVerifier
-from localization.pose_estimator import PoseEstimator
+from localization.pose_estimator import PoseEstimator, CameraPose
 from localization.confidence_estimator import ConfidenceEstimator
 
 logger = logging.getLogger(__name__)
-
-
-class CameraPose:
-    """Estimated camera pose in world frame."""
-    def __init__(self):
-        self.latitude = 0.0
-        self.longitude = 0.0
-        self.altitude = 0.0
-        self.roll_deg = 0.0
-        self.pitch_deg = 0.0
-        self.yaw_deg = 0.0
-        self.timestamp_us = 0
 
 
 class LocalizationResult:
@@ -86,12 +68,12 @@ class RealtimeLocalizer:
 
         # Default config
         self.config = config or {
-            "vpr_top_k": 10,  # Return top 10 candidate buildings
+            "vpr_top_k": 10,
             "min_vpr_confidence": 0.3,
             "min_geometric_confidence": 0.4,
             "min_pose_confidence": 0.5,
             "max_search_radius_m": 500,
-            "detector_type": "orb",  # orb or sift
+            "detector_type": "orb",
         }
 
         # Initialize pipeline components
@@ -108,7 +90,7 @@ class RealtimeLocalizer:
         self.tracking_status = "init"
         self.frame_count = 0
         self.lost_frames = 0
-        self.lost_threshold = 5  # Frames before "lost"
+        self.lost_threshold = 5
 
         logger.info("RealtimeLocalizer initialized")
 
@@ -143,7 +125,7 @@ class RealtimeLocalizer:
         result.frame_time_ms = (time.time() - frame_time_start) * 1000
 
         # 2. Extract features
-        features = self.feature_extractor.extract(rgb)
+        features = self.feature_extractor.extract(rgb.frame)
         if not features or len(features.keypoints) == 0:
             logger.warning("No features extracted from frame")
             result.tracking_status = "init"
@@ -151,7 +133,7 @@ class RealtimeLocalizer:
 
         # 3. VPR: Find candidate buildings
         vpr_time_start = time.time()
-        vpr_result = self.vpr.recognize(rgb)
+        vpr_result = self.vpr.recognize(rgb.frame)
         result.vpr_time_ms = (time.time() - vpr_time_start) * 1000
 
         if not vpr_result or not vpr_result.candidates:
@@ -164,11 +146,12 @@ class RealtimeLocalizer:
         best_candidate = vpr_result.best_candidate
         vpr_confidence = vpr_result.best_confidence if vpr_result.best_candidate else 0.0
 
-        # 5. Pose estimation: get 6-DoF camera pose from top candidate
+        # 5. Pose estimation
         pose_time_start = time.time()
+        depth_array = depth.depth_map if depth else None
         pose = self.pose_estimator.estimate(
             features,
-            depth,
+            depth_array,
             best_candidate,
             calibration,
             origin=self.local_origin
@@ -182,11 +165,12 @@ class RealtimeLocalizer:
             return result
 
         # 6. Confidence scoring
+        depth_quality = self.confidence_estimator.estimate_depth_quality(depth_array)
         confidence = self.confidence_estimator.estimate(
             vpr_confidence=vpr_confidence,
-            geometric_confidence=0.7,  # Default if no geometric verifier
-            pose_confidence=0.8,  # Default reprojection quality
-            depth_quality=self._estimate_depth_quality(depth)
+            geometric_confidence=0.7,
+            pose_confidence=0.8,
+            depth_quality=depth_quality
         )
 
         if confidence < self.config["min_pose_confidence"]:
@@ -204,9 +188,7 @@ class RealtimeLocalizer:
         self.last_pose = pose
 
         logger.info(
-            f"✓ Localized: ({pose.latitude:.4f}, {pose.longitude:.4f}) @ {confidence:.2f} confidence | "
-            f"VPR:{result.vpr_time_ms:.1f}ms Geom:{result.geometric_time_ms:.1f}ms "
-            f"Pose:{result.pose_time_ms:.1f}ms"
+            f"✓ Localized: ({pose.latitude:.4f}, {pose.longitude:.4f}) @ {confidence:.2f} confidence"
         )
 
         return result
@@ -215,8 +197,7 @@ class RealtimeLocalizer:
         """
         Localize continuously on camera feed.
 
-        Streams pose estimates in real-time. Useful for live AR or
-        autonomous navigation.
+        Streams pose estimates in real-time.
 
         Args:
             duration_sec: How long to run (0 = infinite)
@@ -244,7 +225,6 @@ class RealtimeLocalizer:
             # Check for tracking loss
             if self.lost_frames > self.lost_threshold:
                 logger.warning(f"Tracking lost for {self.lost_frames} frames")
-                # Could trigger relocalization here
 
     def get_statistics(self) -> dict:
         """Return localization statistics."""
@@ -257,12 +237,3 @@ class RealtimeLocalizer:
                 "altitude": self.last_pose.altitude if self.last_pose else 0,
             } if self.last_pose else None,
         }
-
-    def _estimate_depth_quality(self, depth_map) -> float:
-        """Estimate quality of depth map (0-1)."""
-        if depth_map is None:
-            return 0.0
-
-        # Simple metric: fraction of valid pixels
-        valid = (depth_map > 0.1) & (depth_map < 50.0)
-        return float(valid.sum()) / valid.size

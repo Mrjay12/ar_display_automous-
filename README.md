@@ -54,6 +54,7 @@ This is a **research prototype** demonstrating:
 
 ### Running Milestone 1 Tests
 
+<<<<<<< HEAD
 **✨ NEW: Single command to run everything:**
 ```bash
 python main.py
@@ -88,6 +89,9 @@ python main.py --list-tests
 **For Windows users:** See `QUICKSTART.md` for Windows-specific examples and troubleshooting.
 
 **Run all 14 acceptance tests individually:**
+=======
+**Run all 14 acceptance tests:**
+>>>>>>> claude/visual-localization-ar-prototype-laynka
 ```bash
 python scripts/run_all_acceptance_tests.py
 ```
@@ -107,10 +111,17 @@ python tests/test_depth_accuracy.py
 # IMU
 python tests/test_imu_acquisition.py --duration 300
 
+<<<<<<< HEAD
 # Record dataset (alternative to main.py)
 python scripts/record_dataset.py --duration 300 --output data/recordings/my_dataset
 
 # Replay dataset (alternative to main.py)
+=======
+# Record dataset
+python scripts/record_dataset.py --duration 300 --output data/recordings/my_dataset
+
+# Replay dataset (no camera needed)
+>>>>>>> claude/visual-localization-ar-prototype-laynka
 python scripts/replay_dataset.py --dataset data/recordings/my_dataset
 ```
 
@@ -126,8 +137,11 @@ Edit `src/config/camera_config.yaml` to adjust:
 
 ```
 ar_display_autonomous/
+<<<<<<< HEAD
 ├── main.py                  # ✨ NEW: Unified entry point (run everything)
 ├── QUICKSTART.md            # ✨ Quick start for Windows users
+=======
+>>>>>>> claude/visual-localization-ar-prototype-laynka
 ├── ARCHITECTURE.md          # Complete system architecture
 ├── MILESTONE_1.md           # Milestone 1 detailed spec
 ├── README.md                # This file
