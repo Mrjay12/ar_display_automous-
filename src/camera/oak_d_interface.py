@@ -112,7 +112,24 @@ class OAKDInterface:
 
             # Create stereo depth
             stereo = self.pipeline.create(dai.node.StereoDepth)
-            stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
+
+            # Try to set preset - PresetMode may vary by depthai version
+            try:
+                # Try HIGH_DENSITY (common in older versions)
+                stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
+            except AttributeError:
+                try:
+                    # Try HIGH_DENSITY as direct attribute
+                    stereo.setDefaultProfilePreset(dai.node.StereoDepth.HIGH_DENSITY)
+                except AttributeError:
+                    try:
+                        # Try other common presets
+                        for preset_name in ['HIGH_DENSITY', 'HIGH_PRECISION', 'MEDIUM_DENSITY']:
+                            if hasattr(dai.node.StereoDepth, preset_name):
+                                stereo.setDefaultProfilePreset(getattr(dai.node.StereoDepth, preset_name))
+                                break
+                    except:
+                        logger.warning("Could not set stereo preset - using defaults")
 
             # Mono cameras for stereo
             mono_left = self.pipeline.create(dai.node.MonoCamera)
