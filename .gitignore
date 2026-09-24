@@ -62,3 +62,15 @@ src/config/calibration.yaml
 *.tmp
 *.temp
 debug_output/
+
+# Local Claude Code development
+.agents/
+.claude-flow/
+.claude/
+.swarm/
+.mcp.json
+CLAUDE.md
+ruvector.db
+ruvector.db-*
+.unlazy/
+.unlazy-hook-state.json
