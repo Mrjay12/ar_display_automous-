@@ -112,39 +112,65 @@ class OAKDInterface:
         """Create DepthAI pipeline."""
         try:
             self.pipeline = dai.Pipeline()
+            logger.debug(f"Pipeline created. Available methods: {[m for m in dir(self.pipeline) if 'create' in m.lower()][:5]}")
 
             # Try different API versions to create color camera
             cam_rgb = None
-            try:
-                # Try camelCase
-                cam_rgb = self.pipeline.createColorCamera()
-            except AttributeError:
-                try:
-                    # Try snake_case
-                    cam_rgb = self.pipeline.create_color_camera()
-                except AttributeError:
-                    logger.error("Could not create color camera - unknown API")
-                    return False
+            for method_name in ['createColorCamera', 'create_color_camera', 'createCameraRGB', 'create_camera_rgb']:
+                if hasattr(self.pipeline, method_name):
+                    try:
+                        method = getattr(self.pipeline, method_name)
+                        cam_rgb = method()
+                        logger.debug(f"✓ Created color camera using {method_name}")
+                        break
+                    except Exception as e:
+                        logger.debug(f"Failed to use {method_name}: {e}")
+                        continue
+
+            if cam_rgb is None:
+                logger.error("Could not create color camera - no working method found")
+                logger.error(f"Available create methods: {[m for m in dir(self.pipeline) if 'create' in m.lower()]}")
+                return False
 
             cam_rgb.setBoardSocket(dai.CameraBoardSocket.RGB)
             cam_rgb.setResolution(dai.ColorCameraProperties.SensorInfo.RGB_1280X720)
             cam_rgb.setFps(30)
 
             # Create stereo depth
-            try:
-                stereo = self.pipeline.createStereoDepth()
-            except AttributeError:
-                stereo = self.pipeline.create_stereo_depth()
+            stereo = None
+            for method_name in ['createStereoDepth', 'create_stereo_depth']:
+                if hasattr(self.pipeline, method_name):
+                    try:
+                        method = getattr(self.pipeline, method_name)
+                        stereo = method()
+                        logger.debug(f"✓ Created stereo depth using {method_name}")
+                        break
+                    except Exception as e:
+                        logger.debug(f"Failed to use {method_name}: {e}")
+
+            if stereo is None:
+                logger.error("Could not create stereo depth")
+                return False
 
             stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
 
             # Mono cameras
-            try:
-                mono_left = self.pipeline.createMonoCamera()
-                mono_right = self.pipeline.createMonoCamera()
-            except AttributeError:
-                mono_left = self.pipeline.create_mono_camera()
-                mono_right = self.pipeline.create_mono_camera()
+            mono_left = None
+            mono_right = None
+            for method_name in ['createMonoCamera', 'create_mono_camera']:
+                if hasattr(self.pipeline, method_name):
+                    try:
+                        method = getattr(self.pipeline, method_name)
+                        mono_left = method()
+                        mono_right = method()
+                        logger.debug(f"✓ Created mono cameras using {method_name}")
+                        break
+                    except Exception as e:
+                        logger.debug(f"Failed to use {method_name}: {e}")
+
+            if mono_left is None or mono_right is None:
+                logger.error("Could not create mono cameras")
+                return False
 
             mono_left.setBoardSocket(dai.CameraBoardSocket.LEFT)
             mono_left.setResolution(dai.MonoCameraProperties.SensorInfo.THE_400_P)
@@ -158,12 +184,22 @@ class OAKDInterface:
             mono_right.out.link(stereo.right)
 
             # Output queues
-            try:
-                xout_rgb = self.pipeline.createXLinkOut()
-                xout_depth = self.pipeline.createXLinkOut()
-            except AttributeError:
-                xout_rgb = self.pipeline.create_xlink_out()
-                xout_depth = self.pipeline.create_xlink_out()
+            xout_rgb = None
+            xout_depth = None
+            for method_name in ['createXLinkOut', 'create_xlink_out']:
+                if hasattr(self.pipeline, method_name):
+                    try:
+                        method = getattr(self.pipeline, method_name)
+                        xout_rgb = method()
+                        xout_depth = method()
+                        logger.debug(f"✓ Created XLink outputs using {method_name}")
+                        break
+                    except Exception as e:
+                        logger.debug(f"Failed to use {method_name}: {e}")
+
+            if xout_rgb is None or xout_depth is None:
+                logger.error("Could not create XLink outputs")
+                return False
 
             xout_rgb.setStreamName("rgb")
             xout_depth.setStreamName("depth")
