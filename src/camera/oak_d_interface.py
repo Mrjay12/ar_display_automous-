@@ -1,11 +1,9 @@
 """
-OAK-D Pro Hardware Interface - Simplified, robust version
-
-Works with multiple depthai API versions.
+OAK-D Pro Hardware Interface - Factory pattern API (depthai 3.x+)
 """
 
 import logging
-from typing import Optional, Tuple
+from typing import Optional
 from dataclasses import dataclass
 import numpy as np
 
@@ -33,7 +31,7 @@ class StereoDepth:
 
 
 class OAKDInterface:
-    """Simplified OAK-D Pro interface."""
+    """OAK-D Pro interface for depthai 3.x+ (factory pattern API)."""
 
     def __init__(self, device_id: Optional[str] = None, config: Optional[dict] = None):
         self.device_id = device_id
@@ -61,22 +59,18 @@ class OAKDInterface:
 
             logger.info("Initializing OAK-D interface...")
 
-            # Step 1: Detect device
             if not self._detect_device():
                 logger.error("Failed to detect OAK-D Pro")
                 return False
 
-            # Step 2: Create and configure pipeline
             if not self._create_pipeline():
                 logger.error("Failed to create pipeline")
                 return False
 
-            # Step 3: Start device
             if not self._start_device():
                 logger.error("Failed to start device")
                 return False
 
-            # Step 4: Get calibration
             self._get_calibration()
 
             self._initialized = True
@@ -97,10 +91,7 @@ class OAKDInterface:
                 return False
 
             device = devices[0]
-            self.device_info = {
-                "device": str(device),
-                "count": len(devices),
-            }
+            self.device_info = {"device": str(device), "count": len(devices)}
             logger.info(f"Device found: {str(device)}")
             return True
 
@@ -109,102 +100,42 @@ class OAKDInterface:
             return False
 
     def _create_pipeline(self) -> bool:
-        """Create DepthAI pipeline."""
+        """Create DepthAI pipeline using factory pattern."""
         try:
             self.pipeline = dai.Pipeline()
-            logger.debug(f"Pipeline created. Available methods: {[m for m in dir(self.pipeline) if 'create' in m.lower()][:5]}")
 
-            # Try different API versions to create color camera
-            cam_rgb = None
-            for method_name in ['createColorCamera', 'create_color_camera', 'createCameraRGB', 'create_camera_rgb']:
-                if hasattr(self.pipeline, method_name):
-                    try:
-                        method = getattr(self.pipeline, method_name)
-                        cam_rgb = method()
-                        logger.debug(f"✓ Created color camera using {method_name}")
-                        break
-                    except Exception as e:
-                        logger.debug(f"Failed to use {method_name}: {e}")
-                        continue
-
-            if cam_rgb is None:
-                logger.error("Could not create color camera - no working method found")
-                logger.error(f"Available create methods: {[m for m in dir(self.pipeline) if 'create' in m.lower()]}")
-                return False
-
+            # Create color camera using factory pattern
+            cam_rgb = self.pipeline.create(dai.node.ColorCamera)
             cam_rgb.setBoardSocket(dai.CameraBoardSocket.RGB)
             cam_rgb.setResolution(dai.ColorCameraProperties.SensorInfo.RGB_1280X720)
             cam_rgb.setFps(30)
 
             # Create stereo depth
-            stereo = None
-            for method_name in ['createStereoDepth', 'create_stereo_depth']:
-                if hasattr(self.pipeline, method_name):
-                    try:
-                        method = getattr(self.pipeline, method_name)
-                        stereo = method()
-                        logger.debug(f"✓ Created stereo depth using {method_name}")
-                        break
-                    except Exception as e:
-                        logger.debug(f"Failed to use {method_name}: {e}")
-
-            if stereo is None:
-                logger.error("Could not create stereo depth")
-                return False
-
+            stereo = self.pipeline.create(dai.node.StereoDepth)
             stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
 
-            # Mono cameras
-            mono_left = None
-            mono_right = None
-            for method_name in ['createMonoCamera', 'create_mono_camera']:
-                if hasattr(self.pipeline, method_name):
-                    try:
-                        method = getattr(self.pipeline, method_name)
-                        mono_left = method()
-                        mono_right = method()
-                        logger.debug(f"✓ Created mono cameras using {method_name}")
-                        break
-                    except Exception as e:
-                        logger.debug(f"Failed to use {method_name}: {e}")
-
-            if mono_left is None or mono_right is None:
-                logger.error("Could not create mono cameras")
-                return False
-
+            # Mono cameras for stereo
+            mono_left = self.pipeline.create(dai.node.MonoCamera)
             mono_left.setBoardSocket(dai.CameraBoardSocket.LEFT)
             mono_left.setResolution(dai.MonoCameraProperties.SensorInfo.THE_400_P)
             mono_left.setFps(30)
 
+            mono_right = self.pipeline.create(dai.node.MonoCamera)
             mono_right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
             mono_right.setResolution(dai.MonoCameraProperties.SensorInfo.THE_400_P)
             mono_right.setFps(30)
 
+            # Link stereo cameras
             mono_left.out.link(stereo.left)
             mono_right.out.link(stereo.right)
 
-            # Output queues
-            xout_rgb = None
-            xout_depth = None
-            for method_name in ['createXLinkOut', 'create_xlink_out']:
-                if hasattr(self.pipeline, method_name):
-                    try:
-                        method = getattr(self.pipeline, method_name)
-                        xout_rgb = method()
-                        xout_depth = method()
-                        logger.debug(f"✓ Created XLink outputs using {method_name}")
-                        break
-                    except Exception as e:
-                        logger.debug(f"Failed to use {method_name}: {e}")
-
-            if xout_rgb is None or xout_depth is None:
-                logger.error("Could not create XLink outputs")
-                return False
-
+            # XLink outputs
+            xout_rgb = self.pipeline.create(dai.node.XLinkOut)
             xout_rgb.setStreamName("rgb")
-            xout_depth.setStreamName("depth")
-
             cam_rgb.video.link(xout_rgb.input)
+
+            xout_depth = self.pipeline.create(dai.node.XLinkOut)
+            xout_depth.setStreamName("depth")
             stereo.depth.link(xout_depth.input)
 
             logger.info("✓ Pipeline created successfully")
