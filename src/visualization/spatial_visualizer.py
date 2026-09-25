@@ -205,7 +205,7 @@ class SpatialVisualizer:
         return None
 
     def _draw_occupancy_grid(self, canvas: np.ndarray) -> np.ndarray:
-        """Draw octomap-style 3D bounding boxes for occupied regions."""
+        """Draw octomap-style point cloud - individual voxels colored by height."""
         try:
             if not self.occupancy_grid:
                 return canvas
@@ -213,48 +213,60 @@ class SpatialVisualizer:
             h, w = canvas.shape[:2]
             voxels = list(self.occupancy_grid.keys())
 
-            # Group voxels by object region for cleaner visualization
+            # Get height range for color mapping
+            all_heights = [vy for vx, vy, vz in voxels]
+            if not all_heights:
+                return canvas
+
+            min_height = min(all_heights)
+            max_height = max(all_heights)
+            height_range = max_height - min_height if max_height > min_height else 1.0
+
+            # Group by depth for proper rendering (far to near)
             voxels_by_depth = {}
             for vx, vy, vz in voxels:
-                depth_bin = int(vz / 0.5)  # Group by 0.5m depth
+                depth_bin = int(vz / 0.2)  # Finer depth grouping
                 if depth_bin not in voxels_by_depth:
                     voxels_by_depth[depth_bin] = []
                 voxels_by_depth[depth_bin].append((vx, vy, vz))
 
-            # Draw from far to near
+            # Draw voxels from far to near (depth sorting for proper occlusion)
             for depth_bin in sorted(voxels_by_depth.keys(), reverse=True):
                 voxel_group = voxels_by_depth[depth_bin]
 
                 for vx, vy, vz in voxel_group:
-                    # Project voxel bounding box corners to 2D
-                    voxel_corners_3d = self._get_voxel_corners(vx, vy, vz)
-                    voxel_corners_2d = []
+                    # Project voxel center to 2D image
+                    voxel_3d = np.array([vx, vy, vz])
+                    voxel_2d = self._voxel_to_2d(voxel_3d)
 
-                    for corner_3d in voxel_corners_3d:
-                        corner_2d = self._voxel_to_2d(corner_3d)
-                        if corner_2d is not None:
-                            voxel_corners_2d.append((corner_2d, corner_3d))
+                    if voxel_2d is not None:
+                        # Color based on HEIGHT (Y coordinate) - rainbow gradient
+                        # Blue (low) → Cyan → Green → Yellow → Red (high)
+                        normalized_height = (vy - min_height) / height_range
 
-                    # Only draw if center projects into frame
-                    center_3d = np.array([vx, vy, vz])
-                    center_2d = self._voxel_to_2d(center_3d)
+                        if normalized_height < 0.25:  # Blue (lowest)
+                            b = int(255 * (1.0 - normalized_height / 0.25))
+                            g = int(255 * (normalized_height / 0.25))
+                            r = 0
+                        elif normalized_height < 0.5:  # Cyan to Green
+                            b = int(255 * (1.0 - (normalized_height - 0.25) / 0.25))
+                            g = 255
+                            r = 0
+                        elif normalized_height < 0.75:  # Green to Yellow
+                            b = 0
+                            g = 255
+                            r = int(255 * ((normalized_height - 0.5) / 0.25))
+                        else:  # Yellow to Red (highest)
+                            b = 0
+                            g = int(255 * (1.0 - (normalized_height - 0.75) / 0.25))
+                            r = 255
 
-                    if center_2d is not None and len(voxel_corners_2d) >= 4:
+                        color = (b, g, r)
+
+                        # Draw voxel as colored point
                         occupancy = self.occupancy_grid[(vx, vy, vz)]
-
-                        # Color based on distance
-                        if vz < 1.5:
-                            color = (0, 0, 220)  # Red (near)
-                        elif vz < 3.0:
-                            color = (0, 220, 220)  # Yellow (mid)
-                        else:
-                            color = (220, 0, 0)  # Blue (far)
-
-                        # Draw voxel wireframe - larger and more visible
-                        self._draw_voxel_wireframe(canvas, voxel_corners_3d, color, thickness=2)
-
-                        # Draw center point as larger circle
-                        cv2.circle(canvas, center_2d, 6, color, -1)
+                        radius = max(2, int(3 * occupancy))  # 2-3px radius
+                        cv2.circle(canvas, voxel_2d, radius, color, -1)
 
             return canvas
 
