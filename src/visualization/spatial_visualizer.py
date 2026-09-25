@@ -238,8 +238,8 @@ class SpatialVisualizer:
             max_height = np.max(y_3d)
             height_range = max_height - min_height if max_height > min_height else 1.0
 
-            # Downsample for performance (render every Nth point)
-            downsample = 2
+            # Downsample for performance (render every Nth point) - render all for dense cloud
+            downsample = 1
             indices = np.arange(0, len(x_3d), downsample)
 
             # Draw each point colored by height
