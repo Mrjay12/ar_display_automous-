@@ -237,7 +237,16 @@ class SpatialVisualizer:
             # Get height range for coloring
             min_height = np.min(y_3d)
             max_height = np.max(y_3d)
-            height_range = max_height - min_height if max_height > min_height else 1.0
+            height_range = max_height - min_height
+
+            # If all points at same height, use depth for coloring instead
+            if height_range < 0.01:
+                min_depth = np.min(z_3d)
+                max_depth = np.max(z_3d)
+                height_range = max_depth - min_depth if max_depth > min_depth else 1.0
+                use_depth_color = True
+            else:
+                use_depth_color = False
 
             # Downsample for performance (render every Nth point) - render all for dense cloud
             downsample = 1
@@ -253,24 +262,27 @@ class SpatialVisualizer:
                 if not (0 <= ux < w and 0 <= uy < h):
                     continue
 
-                # Height-based rainbow coloring
-                normalized_height = (hy - min_height) / height_range
+                # Height-based rainbow coloring (or depth-based if height too uniform)
+                if use_depth_color:
+                    normalized_value = (uz - min_depth) / height_range
+                else:
+                    normalized_value = (hy - min_height) / height_range
 
-                if normalized_height < 0.25:  # Blue (lowest)
-                    b = int(255 * (1.0 - normalized_height / 0.25))
-                    g = int(255 * (normalized_height / 0.25))
+                if normalized_value < 0.25:  # Blue (lowest)
+                    b = int(255 * (1.0 - normalized_value / 0.25))
+                    g = int(255 * (normalized_value / 0.25))
                     r = 0
-                elif normalized_height < 0.5:  # Cyan to Green
-                    b = int(255 * (1.0 - (normalized_height - 0.25) / 0.25))
+                elif normalized_value < 0.5:  # Cyan to Green
+                    b = int(255 * (1.0 - (normalized_value - 0.25) / 0.25))
                     g = 255
                     r = 0
-                elif normalized_height < 0.75:  # Green to Yellow
+                elif normalized_value < 0.75:  # Green to Yellow
                     b = 0
                     g = 255
-                    r = int(255 * ((normalized_height - 0.5) / 0.25))
+                    r = int(255 * ((normalized_value - 0.5) / 0.25))
                 else:  # Yellow to Red (highest)
                     b = 0
-                    g = int(255 * (1.0 - (normalized_height - 0.75) / 0.25))
+                    g = int(255 * (1.0 - (normalized_value - 0.75) / 0.25))
                     r = 255
 
                 color = (b, g, r)
