@@ -29,6 +29,8 @@ class SpatialObject:
     height: float  # meters
     confidence: float  # 0-1
     label: str = "object"
+    contour: Optional[np.ndarray] = None  # 2D contour points in image space
+    bbox: Optional[tuple] = None  # Bounding box (x_min, y_min, x_max, y_max)
 
 
 class SpatialVisualizer:
@@ -248,7 +250,7 @@ class SpatialVisualizer:
                 # Confidence based on depth consistency
                 confidence = 0.5 + min(0.5, 1.0 - depth_std / mean_depth) if mean_depth > 0 else 0.7
 
-                # Create spatial object
+                # Create spatial object with contour
                 obj = SpatialObject(
                     x=center_3d[0],
                     y=center_3d[1],
@@ -257,7 +259,9 @@ class SpatialVisualizer:
                     depth=depth_dim,
                     height=0.5,  # Assume standard height
                     confidence=confidence,
-                    label="obstacle"
+                    label="obstacle",
+                    contour=contour,  # Store original contour
+                    bbox=(x_min, y_min, x_max, y_max)  # Store bounding box
                 )
 
                 objects.append(obj)
@@ -372,83 +376,48 @@ class SpatialVisualizer:
         obj: SpatialObject,
         depth_frame: np.ndarray
     ) -> np.ndarray:
-        """Draw a 3D wireframe box for detected object."""
+        """Draw wireframe contour covering the entire detected region."""
         try:
             h, w = canvas.shape[:2]
-            fx = self.K[0, 0]
-            fy = self.K[1, 1]
-            cx = self.K[0, 2]
-            cy = self.K[1, 2]
 
             if obj.z <= 0:
                 return canvas
 
-            # Define 3D bounding box corners (in camera frame)
-            # Object center at (obj.x, obj.y, obj.z)
-            # Dimensions: width, depth, height
-            half_w = obj.width / 2
-            half_d = obj.depth / 2
-            half_h = obj.height / 2
-
-            corners_3d = np.array([
-                # Bottom face (y = obj.y - half_h)
-                [obj.x - half_w, obj.y - half_h, obj.z + half_d],
-                [obj.x + half_w, obj.y - half_h, obj.z + half_d],
-                [obj.x + half_w, obj.y - half_h, obj.z - half_d],
-                [obj.x - half_w, obj.y - half_h, obj.z - half_d],
-                # Top face (y = obj.y + half_h)
-                [obj.x - half_w, obj.y + half_h, obj.z + half_d],
-                [obj.x + half_w, obj.y + half_h, obj.z + half_d],
-                [obj.x + half_w, obj.y + half_h, obj.z - half_d],
-                [obj.x - half_w, obj.y + half_h, obj.z - half_d],
-            ], dtype=np.float32)
-
-            # Project to 2D
-            points_2d = []
-            for corner in corners_3d:
-                x, y, z = corner
-                if z <= 0:  # Behind camera
-                    points_2d.append(None)
-                else:
-                    px = cx + (x / z) * fx
-                    py = cy - (y / z) * fy
-                    points_2d.append((int(px), int(py)))
-
-            # Draw edges if all points are valid
             color = (0, 255, 0) if obj.confidence > 0.5 else (0, 165, 255)
 
-            if all(p is not None for p in points_2d):
-                # Bottom face
-                cv2.line(canvas, points_2d[0], points_2d[1], color, 2)
-                cv2.line(canvas, points_2d[1], points_2d[2], color, 2)
-                cv2.line(canvas, points_2d[2], points_2d[3], color, 2)
-                cv2.line(canvas, points_2d[3], points_2d[0], color, 2)
+            # Draw the actual contour (covers entire detected region)
+            if obj.contour is not None:
+                cv2.drawContours(canvas, [obj.contour], 0, color, 3)
 
-                # Top face
-                cv2.line(canvas, points_2d[4], points_2d[5], color, 2)
-                cv2.line(canvas, points_2d[5], points_2d[6], color, 2)
-                cv2.line(canvas, points_2d[6], points_2d[7], color, 2)
-                cv2.line(canvas, points_2d[7], points_2d[4], color, 2)
+            # Draw filled overlay with transparency to highlight entire region
+            if obj.contour is not None:
+                overlay = canvas.copy()
+                cv2.drawContours(overlay, [obj.contour], 0, color, -1)
+                # Blend: semi-transparent fill
+                cv2.addWeighted(overlay, 0.15, canvas, 0.85, 0, canvas)
 
-                # Vertical edges
-                cv2.line(canvas, points_2d[0], points_2d[4], color, 2)
-                cv2.line(canvas, points_2d[1], points_2d[5], color, 2)
-                cv2.line(canvas, points_2d[2], points_2d[6], color, 2)
-                cv2.line(canvas, points_2d[3], points_2d[7], color, 2)
+            # Draw bbox for reference
+            if obj.bbox is not None:
+                x_min, y_min, x_max, y_max = obj.bbox
+                center_x = (x_min + x_max) // 2
+                center_y = (y_min + y_max) // 2
 
-            # Draw center point and label
-            center_2d = np.mean([p for p in points_2d if p is not None], axis=0)
-            if len([p for p in points_2d if p is not None]) > 0:
-                cv2.circle(canvas, tuple(center_2d.astype(int)), 5, color, -1)
+                # Draw center point
+                cv2.circle(canvas, (center_x, center_y), 5, color, -1)
 
                 # Label with distance and confidence
-                label = f"{obj.label} {obj.z:.1f}m (conf: {obj.confidence:.1f})"
-                cv2.putText(canvas, label, (int(center_2d[0]) - 50, int(center_2d[1]) - 15),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+                label = f"{obj.label} {obj.z:.1f}m"
+                cv2.putText(canvas, label, (x_min, y_min - 5),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+                # Confidence indicator
+                conf_label = f"conf: {obj.confidence:.2f}"
+                cv2.putText(canvas, conf_label, (x_min, y_max + 15),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
 
             return canvas
         except Exception as e:
-            logger.warning(f"Box drawing failed: {e}")
+            logger.warning(f"Contour drawing failed: {e}")
             return canvas
 
     def _draw_info_overlay(
