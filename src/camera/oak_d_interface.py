@@ -274,6 +274,7 @@ class OAKDInterface:
                 type=dai.ImgFrame.Type.BGR888p,
                 resizeMode=dai.ImgResizeMode.CROP,
                 fps=30,
+                enableUndistortion=True,
             )
 
             # =================================================================
