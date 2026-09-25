@@ -351,18 +351,21 @@ class SpatialVisualizer:
 
             depth_binary = (valid_mask).astype(np.uint8) * 255
 
-            # Morphological operations to clean up depth map
-            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-            depth_binary = cv2.morphologyEx(depth_binary, cv2.MORPH_CLOSE, kernel)
-            depth_binary = cv2.morphologyEx(depth_binary, cv2.MORPH_OPEN, kernel)
+            # Morphological operations to clean up depth map (smaller kernel for fine details)
+            kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            kernel_med = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+
+            # Apply operations to preserve small objects
+            depth_binary = cv2.morphologyEx(depth_binary, cv2.MORPH_CLOSE, kernel_small)
+            depth_binary = cv2.morphologyEx(depth_binary, cv2.MORPH_OPEN, kernel_small)
 
             # Find contours (potential objects)
             contours, _ = cv2.findContours(depth_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
             for contour in contours:
-                # Use smaller area threshold to catch more objects
+                # Lower area threshold to catch thin objects like cables
                 area = cv2.contourArea(contour)
-                if area < 50:  # Lowered from 100
+                if area < 25:  # Detect objects down to ~5x5 pixel regions
                     continue
 
                 # Get bounding box
@@ -407,9 +410,13 @@ class SpatialVisualizer:
                 center_2d = np.array([(x_min + x_max) / 2, (y_min + y_max) / 2], dtype=np.float32)
                 center_3d = self._pixel_to_3d(center_2d.reshape(1, 2), mean_depth)[0]
 
-                # Skip very small objects
-                if width < 0.05 or depth_dim < 0.05:
+                # Skip only extremely small objects (1cm), allow thin obstacles like cables
+                if (width < 0.01 and depth_dim < 0.01):
                     continue
+
+                # Clamp minimum dimensions for physically realistic objects
+                width = max(width, 0.02)  # At least 2cm wide
+                depth_dim = max(depth_dim, 0.02)  # At least 2cm deep
 
                 # Confidence based on depth consistency
                 confidence = 0.5 + min(0.5, 1.0 - depth_std / mean_depth) if mean_depth > 0 else 0.7
@@ -540,7 +547,7 @@ class SpatialVisualizer:
         obj: SpatialObject,
         depth_frame: np.ndarray
     ) -> np.ndarray:
-        """Draw wireframe contour covering the entire detected region."""
+        """Draw contour and ground plane label for detected object."""
         try:
             h, w = canvas.shape[:2]
 
@@ -560,24 +567,49 @@ class SpatialVisualizer:
                 # Blend: semi-transparent fill
                 cv2.addWeighted(overlay, 0.15, canvas, 0.85, 0, canvas)
 
-            # Draw bbox for reference
+            # Project object center to ground plane (Y=-0.5m, where ground is)
+            ground_height = -0.5
+            ground_point_3d = np.array([obj.x, ground_height, obj.z], dtype=np.float32)
+            ground_point_2d = self._voxel_to_2d(ground_point_3d)
+
+            if ground_point_2d is not None:
+                gx, gy = ground_point_2d
+
+                # Draw label at ground plane position
+                label = f"{obj.label} {obj.z:.1f}m"
+
+                # Draw text with background for visibility
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.5
+                thickness = 1
+
+                text_size = cv2.getTextSize(label, font, font_scale, thickness)[0]
+
+                # Background rect
+                padding = 4
+                cv2.rectangle(canvas,
+                             (gx - padding, gy - text_size[1] - padding),
+                             (gx + text_size[0] + padding, gy + padding),
+                             (0, 0, 0), -1)
+
+                # Text
+                cv2.putText(canvas, label, (gx, gy),
+                           font, font_scale, color, thickness)
+
+                # Confidence indicator below label
+                conf_label = f"conf: {obj.confidence:.2f}"
+                cv2.putText(canvas, conf_label, (gx, gy + 15),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
+
+                # Draw point on ground plane
+                cv2.circle(canvas, (gx, gy), 4, color, -1)
+
+            # Draw center point in image space
             if obj.bbox is not None:
                 x_min, y_min, x_max, y_max = obj.bbox
                 center_x = (x_min + x_max) // 2
                 center_y = (y_min + y_max) // 2
-
-                # Draw center point
-                cv2.circle(canvas, (center_x, center_y), 5, color, -1)
-
-                # Label with distance and confidence
-                label = f"{obj.label} {obj.z:.1f}m"
-                cv2.putText(canvas, label, (x_min, y_min - 5),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-
-                # Confidence indicator
-                conf_label = f"conf: {obj.confidence:.2f}"
-                cv2.putText(canvas, conf_label, (x_min, y_max + 15),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                cv2.circle(canvas, (center_x, center_y), 3, color, -1)
 
             return canvas
         except Exception as e:
