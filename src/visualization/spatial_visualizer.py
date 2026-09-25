@@ -36,18 +36,27 @@ class SpatialObject:
 class SpatialVisualizer:
     """Render 3D spatial visualization with octomap-style voxel grid."""
 
-    def __init__(self, camera_matrix: np.ndarray, image_width: int = 640, image_height: int = 360):
+    def __init__(self, camera_matrix: np.ndarray, image_width: int = 640, image_height: int = 360,
+                 rgb_width: int = None, rgb_height: int = None):
         """
         Initialize spatial visualizer.
 
         Args:
-            camera_matrix: Camera intrinsic matrix K (3x3)
-            image_width: Image width in pixels
-            image_height: Image height in pixels
+            camera_matrix: Camera intrinsic matrix K (3x3) for depth resolution
+            image_width: Depth image width in pixels
+            image_height: Depth image height in pixels
+            rgb_width: RGB display width (for coordinate scaling)
+            rgb_height: RGB display height (for coordinate scaling)
         """
         self.K = camera_matrix
         self.width = image_width
         self.height = image_height
+        # RGB dimensions for rendering (may differ from depth dimensions)
+        self.rgb_width = rgb_width if rgb_width is not None else image_width
+        self.rgb_height = rgb_height if rgb_height is not None else image_height
+        # Scale factors for projecting depth coordinates onto RGB frame
+        self.scale_x = self.rgb_width / self.width if self.width > 0 else 1.0
+        self.scale_y = self.rgb_height / self.height if self.height > 0 else 1.0
 
         # Default local origin (Minsk, Belarus example from current system)
         self.local_origin = (53.9045, 27.5615, 125.5)
@@ -136,8 +145,8 @@ class SpatialVisualizer:
         Render RGB frame with spatial visualization overlay.
 
         Args:
-            rgb_frame: RGB image (H, W, 3)
-            depth_frame: Depth map (H, W) in meters
+            rgb_frame: RGB image (H, W, 3) at display resolution
+            depth_frame: Depth map (H, W) in meters at depth sensor resolution
             objects: List of spatial objects to draw
 
         Returns:
@@ -149,6 +158,13 @@ class SpatialVisualizer:
         try:
             # Make a copy to avoid modifying original
             canvas = rgb_frame.copy()
+            # Update RGB dimensions from actual frame if different
+            actual_h, actual_w = rgb_frame.shape[:2]
+            if actual_w != self.rgb_width or actual_h != self.rgb_height:
+                self.rgb_width = actual_w
+                self.rgb_height = actual_h
+                self.scale_x = self.rgb_width / self.width if self.width > 0 else 1.0
+                self.scale_y = self.rgb_height / self.height if self.height > 0 else 1.0
 
             if objects is None:
                 objects = []
@@ -259,8 +275,16 @@ class SpatialVisualizer:
                 ux, uy, uz = u_pixels[idx], v_pixels[idx], z_3d[idx]
                 hy = y_3d[idx]
 
-                # Skip if outside image
+                # Skip if outside depth image
                 if not (0 <= ux < w and 0 <= uy < h):
+                    continue
+
+                # Scale to RGB frame coordinates
+                ux_rgb = int(ux * self.scale_x)
+                uy_rgb = int(uy * self.scale_y)
+
+                # Skip if outside RGB frame
+                if not (0 <= ux_rgb < self.rgb_width and 0 <= uy_rgb < self.rgb_height):
                     continue
 
                 # Height-based rainbow coloring (or depth-based if height too uniform)
@@ -288,8 +312,8 @@ class SpatialVisualizer:
 
                 color = (b, g, r)
 
-                # Draw point at pixel location (larger radius for visibility)
-                cv2.circle(canvas, (int(ux), int(uy)), 4, color, -1)
+                # Draw point at scaled RGB location
+                cv2.circle(canvas, (ux_rgb, uy_rgb), 4, color, -1)
 
             # Store for debug
             self._last_point_cloud_count = point_count

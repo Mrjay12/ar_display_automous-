@@ -198,27 +198,33 @@ def run_spatial_visualization(duration_sec=60):
         depth_height, depth_width = first_frame.depth.shape[:2]
         logger.info(f"Detected resolutions: RGB={rgb_width}x{rgb_height}, Depth={depth_width}x{depth_height}")
 
-        # Get camera calibration (always available with defaults)
+        # Get camera calibration from device or use OAK-D Pro defaults
         calibration = camera.get_calibration()
         if calibration is None:
-            logger.warning("Camera calibration not available, using defaults")
-            # Create fallback calibration for actual RGB resolution
+            logger.warning("Camera calibration not available, using OAK-D Pro defaults")
+            # OAK-D Pro intrinsics for DEPTH resolution (320x200)
             import numpy as np
-            fx = rgb_width * 1.08
-            fy = rgb_height * 1.08
+            # Focal lengths scale with resolution: 890 pixels at 1280x720 -> ~220 pixels at 320x200
+            fx = (890.0 * depth_width) / 1280.0
+            fy = (890.0 * depth_height) / 720.0
+            cx = depth_width / 2.0
+            cy = depth_height / 2.0
             calibration = np.array([
-                [fx, 0, rgb_width/2],
-                [0, fy, rgb_height/2],
+                [fx, 0, cx],
+                [0, fy, cy],
                 [0, 0, 1],
             ], dtype=np.float32)
-            logger.info(f"Using default calibration for {rgb_width}×{rgb_height}")
+            logger.info(f"Using OAK-D Pro defaults for depth: fx={fx:.1f}, fy={fy:.1f}")
 
-        # Initialize spatial visualizer with ACTUAL RGB dimensions
+        # Initialize spatial visualizer with DEPTH dimensions (not RGB)
+        # Point cloud will be rendered onto RGB frame using coordinate scaling
         logger.info("Initializing spatial visualizer...")
         visualizer = SpatialVisualizer(
             camera_matrix=calibration,
-            image_width=rgb_width,
-            image_height=rgb_height
+            image_width=depth_width,
+            image_height=depth_height,
+            rgb_width=rgb_width,
+            rgb_height=rgb_height
         )
 
         logger.info(f"Starting spatial visualization for {duration_sec}s")
@@ -245,15 +251,9 @@ def run_spatial_visualization(duration_sec=60):
 
                 frame_count += 1
 
-                # Extract depth and RGB
+                # Extract depth and RGB (keep at native resolutions - don't resize!)
                 depth_array = rgbd_frame.depth
                 rgb_data = rgbd_frame.rgb
-
-                # Resize depth to match RGB resolution for proper overlay
-                if depth_array.shape[:2] != rgb_data.shape[:2]:
-                    depth_array = cv2.resize(depth_array,
-                                            (rgb_data.shape[1], rgb_data.shape[0]),
-                                            interpolation=cv2.INTER_LINEAR)
 
                 # Process depth and detect objects
                 objects = visualizer.process_depth_frame(depth_array)
