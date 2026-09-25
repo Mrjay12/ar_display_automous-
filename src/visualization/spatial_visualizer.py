@@ -168,44 +168,35 @@ class SpatialVisualizer:
         points_3d: np.ndarray,
         depth_frame: np.ndarray
     ) -> List[SpatialObject]:
-        """Detect objects in 3D space using depth clustering."""
+        """Detect objects in 3D space using depth analysis."""
         objects = []
 
         if len(points_3d) == 0:
             return objects
 
         try:
-            # Filter points by depth range
-            valid_mask = (points_3d[:, 2] > 0.2) & (points_3d[:, 2] < self.max_range)
-            points_filtered = points_3d[valid_mask]
-
-            if len(points_filtered) == 0:
-                return objects
-
-            # Simple clustering: find connected regions with similar depth
-            # For now, use a simple approach: find peaks in depth discontinuities
-
-            # Compute depth variance in local regions
             depth_map = depth_frame.copy()
 
-            # Create binary mask of valid depth pixels
-            valid_mask = (depth_map > 0.1) & np.isfinite(depth_map)
+            # Create binary mask of valid depth pixels in range
+            valid_mask = (depth_map > 0.2) & (depth_map < self.max_range) & np.isfinite(depth_map)
+
+            if not np.any(valid_mask):
+                return objects
+
             depth_binary = (valid_mask).astype(np.uint8) * 255
 
-            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            # Morphological operations to clean up depth map
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
             depth_binary = cv2.morphologyEx(depth_binary, cv2.MORPH_CLOSE, kernel)
             depth_binary = cv2.morphologyEx(depth_binary, cv2.MORPH_OPEN, kernel)
-
-            # Create a NaN map for later use
-            depth_map[~valid_mask] = np.nan
 
             # Find contours (potential objects)
             contours, _ = cv2.findContours(depth_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
             for contour in contours:
-                # Filter small contours
+                # Use smaller area threshold to catch more objects
                 area = cv2.contourArea(contour)
-                if area < 100:  # Min area threshold
+                if area < 50:  # Lowered from 100
                     continue
 
                 # Get bounding box
@@ -213,17 +204,23 @@ class SpatialVisualizer:
                 x_max = x_min + w
                 y_max = y_min + h
 
+                # Ensure bounds are valid
+                if x_max <= x_min or y_max <= y_min:
+                    continue
+
                 # Get depth range in this region
                 roi_depth = depth_map[y_min:y_max, x_min:x_max]
-                valid_depths = roi_depth[~np.isnan(roi_depth)]
+                roi_valid = valid_mask[y_min:y_max, x_min:x_max]
+                valid_depths = roi_depth[roi_valid]
 
                 if len(valid_depths) == 0:
                     continue
 
-                mean_depth = np.nanmean(valid_depths)
+                mean_depth = np.mean(valid_depths)
+                depth_std = np.std(valid_depths)
 
-                # Skip if too close or too far
-                if mean_depth < 0.2 or mean_depth > self.max_range:
+                # Skip if depth is invalid
+                if not np.isfinite(mean_depth):
                     continue
 
                 # Project corners to 3D to estimate size
@@ -238,11 +235,18 @@ class SpatialVisualizer:
 
                 # Estimate object dimensions
                 width = np.linalg.norm(corners_3d[1] - corners_3d[0])
-                height = np.linalg.norm(corners_3d[2] - corners_3d[0])
+                depth_dim = np.linalg.norm(corners_3d[2] - corners_3d[0])
 
                 # Center in 3D
                 center_2d = np.array([(x_min + x_max) / 2, (y_min + y_max) / 2], dtype=np.float32)
                 center_3d = self._pixel_to_3d(center_2d.reshape(1, 2), mean_depth)[0]
+
+                # Skip very small objects
+                if width < 0.05 or depth_dim < 0.05:
+                    continue
+
+                # Confidence based on depth consistency
+                confidence = 0.5 + min(0.5, 1.0 - depth_std / mean_depth) if mean_depth > 0 else 0.7
 
                 # Create spatial object
                 obj = SpatialObject(
@@ -250,14 +254,15 @@ class SpatialVisualizer:
                     y=center_3d[1],
                     z=center_3d[2],
                     width=width,
-                    depth=mean_depth,
-                    height=height * 0.5,  # Assume half height (ground to mid-point)
-                    confidence=0.7,
+                    depth=depth_dim,
+                    height=0.5,  # Assume standard height
+                    confidence=confidence,
                     label="obstacle"
                 )
 
                 objects.append(obj)
 
+            logger.debug(f"Detected {len(objects)} objects")
             return objects
 
         except Exception as e:
