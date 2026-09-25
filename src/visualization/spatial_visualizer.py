@@ -304,51 +304,62 @@ class SpatialVisualizer:
             cy = self.K[1, 2]
 
             grid_spacing = 0.5  # 0.5m grid cells
-            grid_width = 5.0    # ±2.5m width
+            grid_width = 4.0    # ±2m width
             max_dist = self.max_range
+            grid_height = 0.5   # Assume camera height 0.5m above ground
 
             # Draw depth lines (parallel to camera, receding into distance)
-            for dist in np.arange(0.5, max_dist + 0.5, grid_spacing):
+            for dist in np.arange(grid_spacing, max_dist, grid_spacing):
                 points_2d = []
 
                 # Generate line from -grid_width to +grid_width at this distance
-                for x in np.linspace(-grid_width / 2, grid_width / 2, 20):
-                    # Project 3D point (x, 0, dist) to 2D image
-                    px = cx + (x / dist) * fx
-                    py = cy - (0 / dist) * fy  # y is 0 (on ground)
+                for x in np.linspace(-grid_width / 2, grid_width / 2, 15):
+                    # Project 3D point (x, -grid_height, dist) to 2D image
+                    # Negative Y because ground is below camera
+                    z = dist
+                    x_3d = x
+                    y_3d = -grid_height
 
-                    if 0 <= px < w:
-                        points_2d.append([px, py])
+                    if z > 0.1:
+                        px = cx + (x_3d / z) * fx
+                        py = cy - (y_3d / z) * fy
+
+                        if 0 <= px < w and 0 <= py < h:
+                            points_2d.append([px, py])
 
                 # Draw line
                 if len(points_2d) > 1:
                     points_array = np.array(points_2d, dtype=np.int32)
                     # Fade color with distance
-                    intensity = int(200 * (1 - dist / max_dist))
+                    intensity = int(150 * (1 - dist / max_dist)) + 50
                     color = (intensity // 2, intensity, intensity // 2)
-                    cv2.polylines(canvas, [points_array], False, color, 1)
+                    cv2.polylines(canvas, [points_array], False, color, 2)
 
             # Draw width lines (perpendicular to camera, at different distances)
-            for x in np.linspace(-grid_width / 2, grid_width / 2, 10):
+            for x in np.linspace(-grid_width / 2, grid_width / 2, 9):
                 points_2d = []
 
-                # Generate line from 0.5m to max_dist
-                for dist in np.linspace(0.5, max_dist, 20):
-                    # Project 3D point (x, 0, dist) to 2D image
-                    px = cx + (x / dist) * fx
-                    py = cy - (0 / dist) * fy
+                # Generate line from 0.3m to max_dist
+                for dist in np.linspace(0.3, max_dist, 20):
+                    z = dist
+                    x_3d = x
+                    y_3d = -grid_height
 
-                    if 0 <= px < w and 0 <= py < h:
-                        points_2d.append([px, py])
+                    if z > 0.1:
+                        px = cx + (x_3d / z) * fx
+                        py = cy - (y_3d / z) * fy
+
+                        if 0 <= px < w and 0 <= py < h:
+                            points_2d.append([px, py])
 
                 # Draw line
                 if len(points_2d) > 1:
                     points_array = np.array(points_2d, dtype=np.int32)
-                    color = (80, 120, 80)
+                    color = (100, 150, 100)
                     cv2.polylines(canvas, [points_array], False, color, 1)
 
             # Draw center line (forward direction)
-            cv2.line(canvas, (int(cx), h), (int(cx), h // 2), (0, 255, 0), 2)
+            cv2.line(canvas, (int(cx), int(cy)), (int(cx), int(cy - 200)), (0, 255, 0), 2)
 
             return canvas
         except Exception as e:
