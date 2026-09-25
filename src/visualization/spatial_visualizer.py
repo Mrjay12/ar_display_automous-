@@ -344,28 +344,27 @@ class SpatialVisualizer:
             depth_map = depth_frame.copy()
 
             # Create binary mask of valid depth pixels in range
-            valid_mask = (depth_map > 0.2) & (depth_map < self.max_range) & np.isfinite(depth_map)
+            # More lenient range to catch nearby and distant objects
+            valid_mask = (depth_map > 0.1) & (depth_map < self.max_range) & np.isfinite(depth_map)
 
             if not np.any(valid_mask):
                 return objects
 
             depth_binary = (valid_mask).astype(np.uint8) * 255
 
-            # Morphological operations to clean up depth map (smaller kernel for fine details)
-            kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-            kernel_med = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+            # Minimal morphological operations - only light smoothing
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
 
-            # Apply operations to preserve small objects
-            depth_binary = cv2.morphologyEx(depth_binary, cv2.MORPH_CLOSE, kernel_small)
-            depth_binary = cv2.morphologyEx(depth_binary, cv2.MORPH_OPEN, kernel_small)
+            # Just light closing, skip opening to preserve thin objects
+            depth_binary = cv2.morphologyEx(depth_binary, cv2.MORPH_CLOSE, kernel, iterations=1)
 
             # Find contours (potential objects)
             contours, _ = cv2.findContours(depth_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
             for contour in contours:
-                # Lower area threshold to catch thin objects like cables
+                # Very low area threshold to catch thin objects like cables
                 area = cv2.contourArea(contour)
-                if area < 25:  # Detect objects down to ~5x5 pixel regions
+                if area < 10:  # Detect objects down to ~3x3 pixel regions
                     continue
 
                 # Get bounding box
@@ -410,13 +409,10 @@ class SpatialVisualizer:
                 center_2d = np.array([(x_min + x_max) / 2, (y_min + y_max) / 2], dtype=np.float32)
                 center_3d = self._pixel_to_3d(center_2d.reshape(1, 2), mean_depth)[0]
 
-                # Skip only extremely small objects (1cm), allow thin obstacles like cables
-                if (width < 0.01 and depth_dim < 0.01):
-                    continue
-
-                # Clamp minimum dimensions for physically realistic objects
-                width = max(width, 0.02)  # At least 2cm wide
-                depth_dim = max(depth_dim, 0.02)  # At least 2cm deep
+                # Don't filter by minimum size - allow all detected contours
+                # Clamp very small dimensions to at least 1cm for visualization
+                width = max(width, 0.01)
+                depth_dim = max(depth_dim, 0.01)
 
                 # Confidence based on depth consistency
                 confidence = 0.5 + min(0.5, 1.0 - depth_std / mean_depth) if mean_depth > 0 else 0.7
