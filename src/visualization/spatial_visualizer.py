@@ -248,8 +248,9 @@ class SpatialVisualizer:
             else:
                 use_depth_color = False
 
-            # Downsample for performance (render every Nth point) - render all for dense cloud
-            downsample = 1
+            # Downsample for performance (render every Nth point)
+            # Balance: downsample=2 gives good density with ~230k points, much faster than downsample=1
+            downsample = 2
             indices = np.arange(0, len(x_3d), downsample)
             point_count = len(indices)
 
