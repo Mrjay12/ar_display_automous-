@@ -307,13 +307,13 @@ class SpatialVisualizer:
                 # Map distance to image space (perspective projection)
                 radius = int((dist / self.max_range) * h * 0.4)
                 if radius > 0:
-                    color = (50, 50, 50)  # Dark gray
+                    color = (100, 150, 100)  # Light green-gray for better visibility
                     cv2.circle(canvas, (center_x, center_y - radius), radius, color, 1)
 
                     # Label
                     cv2.putText(canvas, f"{dist:.1f}m",
                                (center_x + radius + 5, center_y - radius),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 100), 1)
 
             # Draw center line (forward direction)
             cv2.line(canvas, (center_x, h), (center_x, h // 2), (0, 255, 0), 2)

@@ -650,6 +650,9 @@ class OAKDInterface:
             if depth is None:
                 return None
 
+            # Convert depth from millimeters to meters
+            depth = depth.astype(np.float32) / 1000.0
+
             # ---------------------------------------------------------------
             # Timestamp
             # ---------------------------------------------------------------
