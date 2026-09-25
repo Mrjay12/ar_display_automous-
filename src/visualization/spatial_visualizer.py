@@ -65,6 +65,7 @@ class SpatialVisualizer:
         self.fov_degrees = 60.0
         self.show_grid = True
         self.show_debug = False
+        self._last_point_cloud_count = 0
 
         logger.info("SpatialVisualizer initialized with octomap voxel grid")
 
@@ -241,6 +242,7 @@ class SpatialVisualizer:
             # Downsample for performance (render every Nth point) - render all for dense cloud
             downsample = 1
             indices = np.arange(0, len(x_3d), downsample)
+            point_count = len(indices)
 
             # Draw each point colored by height
             for idx in indices:
@@ -273,8 +275,11 @@ class SpatialVisualizer:
 
                 color = (b, g, r)
 
-                # Draw point at pixel location
-                cv2.circle(canvas, (int(ux), int(uy)), 3, color, -1)
+                # Draw point at pixel location (larger radius for visibility)
+                cv2.circle(canvas, (int(ux), int(uy)), 4, color, -1)
+
+            # Store for debug
+            self._last_point_cloud_count = point_count
 
             return canvas
 
@@ -708,12 +713,13 @@ class SpatialVisualizer:
             h, w = canvas.shape[:2]
 
             # Background for text
-            cv2.rectangle(canvas, (5, 5), (400, 120), (0, 0, 0), -1)
-            cv2.rectangle(canvas, (5, 5), (400, 120), (0, 255, 0), 2)
+            cv2.rectangle(canvas, (5, 5), (400, 140), (0, 0, 0), -1)
+            cv2.rectangle(canvas, (5, 5), (400, 140), (0, 255, 0), 2)
 
             # Info text
             lines = [
                 f"Spatial Visualization - Objects: {num_objects}",
+                f"Point Cloud: {self._last_point_cloud_count:,} points",
                 f"Range: 0.2m - {self.max_range}m",
                 f"FOV: {self.fov_degrees}°",
                 f"Grid: {self.grid_size}m cells",
