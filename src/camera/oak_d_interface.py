@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class CameraFrame:
-    """Left stereo camera frame (grayscale)."""
+    """RGB camera frame."""
 
     timestamp_us: int
     frame: np.ndarray
@@ -57,10 +57,11 @@ class StereoDepth:
 @dataclass
 class RGBDFrame:
     """
-    Synchronized left camera + depth frame.
+    Synchronized RGB + depth frame.
 
-    The depth image is aligned to the left stereo camera image.
-    Left camera is grayscale for stereo baseline.
+    The depth image is aligned to the RGB image.
+    Depth computed from stereo pair (left + right mono cameras).
+    RGB provides visual context for spatial visualization overlay.
     """
 
     timestamp_us: int
@@ -75,20 +76,23 @@ class RGBDFrame:
 
 class OAKDInterface:
     """
-    OAK-D Pro interface for DepthAI 3.x - Stereo-only spatial pipeline.
+    OAK-D Pro interface for DepthAI 3.x - Stereo spatial with RGB overlay.
 
     Standard OAK-D camera layout:
 
-        CAM_B -> LEFT mono (visualization + stereo baseline)
+        CAM_A -> RGB (visualization background)
+        CAM_B -> LEFT mono (stereo baseline for depth)
         CAM_C -> RIGHT mono (stereo pair for depth)
 
     Pipeline:
 
-        LEFT
+        RGB
           \
-           -> Sync -> RGBDFrame (left-aligned depth)
+           -> Sync -> RGBDFrame (RGB with RGB-aligned depth)
           /
         Stereo -> ImageAlign
+
+    Spatial info from stereo depth, visual context from RGB.
     """
 
     def __init__(
@@ -254,7 +258,26 @@ class OAKDInterface:
             self.pipeline = dai.Pipeline()
 
             # =================================================================
-            # LEFT CAMERA (for visualization background)
+            # RGB CAMERA (visualization background with spatial overlay)
+            # =================================================================
+
+            rgb_camera = self.pipeline.create(
+                dai.node.Camera
+            )
+
+            rgb_camera.build(
+                dai.CameraBoardSocket.CAM_A
+            )
+
+            rgb_output = rgb_camera.requestOutput(
+                size=(1280, 720),
+                type=dai.ImgFrame.Type.BGR888p,
+                resizeMode=dai.ImgResizeMode.CROP,
+                fps=30,
+            )
+
+            # =================================================================
+            # LEFT CAMERA (stereo baseline for depth)
             # =================================================================
 
             left_mono = self.pipeline.create(
@@ -273,7 +296,7 @@ class OAKDInterface:
             )
 
             # =================================================================
-            # RIGHT CAMERA (for stereo pair)
+            # RIGHT CAMERA (stereo pair for depth)
             # =================================================================
 
             right_mono = self.pipeline.create(
@@ -375,13 +398,13 @@ class OAKDInterface:
                 image_align.input
             )
 
-            # Left camera determines target alignment.
-            left_output.link(
+            # RGB camera determines target alignment.
+            rgb_output.link(
                 image_align.inputAlignTo
             )
 
             # =================================================================
-            # LEFT + DEPTH SYNCHRONIZATION
+            # RGB + DEPTH SYNCHRONIZATION
             # =================================================================
 
             sync = self.pipeline.create(
@@ -411,12 +434,12 @@ class OAKDInterface:
                     "Sync attempts configuration unavailable."
                 )
 
-            # Left camera (for visualization background)
-            left_output.link(
+            # RGB camera (visualization background)
+            rgb_output.link(
                 sync.inputs["rgb"]
             )
 
-            # Left-aligned depth
+            # RGB-aligned depth (spatial information)
             image_align.outputAligned.link(
                 sync.inputs["depth"]
             )
