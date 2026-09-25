@@ -156,9 +156,8 @@ class SpatialVisualizer:
             if self.show_grid:
                 canvas = self._draw_ground_grid(canvas, depth_frame)
 
-            # Build and draw occupancy grid (octomap-style voxel visualization)
-            self._build_occupancy_grid(objects)
-            canvas = self._draw_occupancy_grid(canvas)
+            # Draw depth-based point cloud (octomap-style visualization)
+            canvas = self._draw_depth_point_cloud(canvas, depth_frame)
 
             # Draw detected objects
             for obj in objects:
@@ -203,6 +202,85 @@ class SpatialVisualizer:
             return (int(u), int(v))
 
         return None
+
+    def _draw_depth_point_cloud(self, canvas: np.ndarray, depth_frame: np.ndarray) -> np.ndarray:
+        """Draw point cloud from depth data, colored by height (octomap style)."""
+        try:
+            if depth_frame is None or depth_frame.size == 0:
+                return canvas
+
+            h, w = canvas.shape[:2]
+
+            # Get valid depth points
+            valid_mask = (depth_frame > 0.1) & (depth_frame < self.max_range) & np.isfinite(depth_frame)
+            valid_indices = np.where(valid_mask)
+
+            if len(valid_indices[0]) == 0:
+                return canvas
+
+            # Convert depth pixels to 3D points
+            v_pixels = valid_indices[0]  # row (y)
+            u_pixels = valid_indices[1]  # col (x)
+            depths = depth_frame[valid_mask]
+
+            # Project to 3D using camera matrix
+            fx = self.K[0, 0]
+            fy = self.K[1, 1]
+            cx = self.K[0, 2]
+            cy = self.K[1, 2]
+
+            x_3d = (u_pixels - cx) * depths / fx
+            y_3d = (v_pixels - cy) * depths / fy
+            z_3d = depths
+
+            # Get height range for coloring
+            min_height = np.min(y_3d)
+            max_height = np.max(y_3d)
+            height_range = max_height - min_height if max_height > min_height else 1.0
+
+            # Downsample for performance (render every Nth point)
+            downsample = 4
+            indices = np.arange(0, len(x_3d), downsample)
+
+            # Draw each point colored by height
+            for idx in indices:
+                ux, uy, uz = u_pixels[idx], v_pixels[idx], z_3d[idx]
+                hy = y_3d[idx]
+
+                # Skip if outside image
+                if not (0 <= ux < w and 0 <= uy < h):
+                    continue
+
+                # Height-based rainbow coloring
+                normalized_height = (hy - min_height) / height_range
+
+                if normalized_height < 0.25:  # Blue (lowest)
+                    b = int(255 * (1.0 - normalized_height / 0.25))
+                    g = int(255 * (normalized_height / 0.25))
+                    r = 0
+                elif normalized_height < 0.5:  # Cyan to Green
+                    b = int(255 * (1.0 - (normalized_height - 0.25) / 0.25))
+                    g = 255
+                    r = 0
+                elif normalized_height < 0.75:  # Green to Yellow
+                    b = 0
+                    g = 255
+                    r = int(255 * ((normalized_height - 0.5) / 0.25))
+                else:  # Yellow to Red (highest)
+                    b = 0
+                    g = int(255 * (1.0 - (normalized_height - 0.75) / 0.25))
+                    r = 255
+
+                color = (b, g, r)
+
+                # Draw point at pixel location
+                cv2.circle(canvas, (int(ux), int(uy)), 2, color, -1)
+
+            return canvas
+
+        except Exception as e:
+            logger.warning(f"Depth point cloud rendering failed: {e}")
+            return canvas
 
     def _draw_occupancy_grid(self, canvas: np.ndarray) -> np.ndarray:
         """Draw octomap-style point cloud - individual voxels colored by height."""
