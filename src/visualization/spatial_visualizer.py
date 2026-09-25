@@ -295,28 +295,60 @@ class SpatialVisualizer:
         return points
 
     def _draw_ground_grid(self, canvas: np.ndarray, depth_frame: np.ndarray) -> np.ndarray:
-        """Draw ground plane grid on visualization."""
+        """Draw 3D perspective grid on ground plane."""
         try:
             h, w = canvas.shape[:2]
+            fx = self.K[0, 0]
+            fy = self.K[1, 1]
+            cx = self.K[0, 2]
+            cy = self.K[1, 2]
 
-            # Draw concentric circles (distance markers)
-            center_x = w // 2
-            center_y = h
+            grid_spacing = 0.5  # 0.5m grid cells
+            grid_width = 5.0    # ±2.5m width
+            max_dist = self.max_range
 
-            for dist in np.arange(1, self.max_range, 1.0):
-                # Map distance to image space (perspective projection)
-                radius = int((dist / self.max_range) * h * 0.4)
-                if radius > 0:
-                    color = (100, 150, 100)  # Light green-gray for better visibility
-                    cv2.circle(canvas, (center_x, center_y - radius), radius, color, 1)
+            # Draw depth lines (parallel to camera, receding into distance)
+            for dist in np.arange(0.5, max_dist + 0.5, grid_spacing):
+                points_2d = []
 
-                    # Label
-                    cv2.putText(canvas, f"{dist:.1f}m",
-                               (center_x + radius + 5, center_y - radius),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 100), 1)
+                # Generate line from -grid_width to +grid_width at this distance
+                for x in np.linspace(-grid_width / 2, grid_width / 2, 20):
+                    # Project 3D point (x, 0, dist) to 2D image
+                    px = cx + (x / dist) * fx
+                    py = cy - (0 / dist) * fy  # y is 0 (on ground)
+
+                    if 0 <= px < w:
+                        points_2d.append([px, py])
+
+                # Draw line
+                if len(points_2d) > 1:
+                    points_array = np.array(points_2d, dtype=np.int32)
+                    # Fade color with distance
+                    intensity = int(200 * (1 - dist / max_dist))
+                    color = (intensity // 2, intensity, intensity // 2)
+                    cv2.polylines(canvas, [points_array], False, color, 1)
+
+            # Draw width lines (perpendicular to camera, at different distances)
+            for x in np.linspace(-grid_width / 2, grid_width / 2, 10):
+                points_2d = []
+
+                # Generate line from 0.5m to max_dist
+                for dist in np.linspace(0.5, max_dist, 20):
+                    # Project 3D point (x, 0, dist) to 2D image
+                    px = cx + (x / dist) * fx
+                    py = cy - (0 / dist) * fy
+
+                    if 0 <= px < w and 0 <= py < h:
+                        points_2d.append([px, py])
+
+                # Draw line
+                if len(points_2d) > 1:
+                    points_array = np.array(points_2d, dtype=np.int32)
+                    color = (80, 120, 80)
+                    cv2.polylines(canvas, [points_array], False, color, 1)
 
             # Draw center line (forward direction)
-            cv2.line(canvas, (center_x, h), (center_x, h // 2), (0, 255, 0), 2)
+            cv2.line(canvas, (int(cx), h), (int(cx), h // 2), (0, 255, 0), 2)
 
             return canvas
         except Exception as e:
@@ -329,48 +361,79 @@ class SpatialVisualizer:
         obj: SpatialObject,
         depth_frame: np.ndarray
     ) -> np.ndarray:
-        """Draw a single object box on the canvas."""
+        """Draw a 3D wireframe box for detected object."""
         try:
             h, w = canvas.shape[:2]
-            center_x = w // 2
-            center_y = h
-
-            # Project 3D position to 2D image space
-            # Use simple perspective projection: screen_x = center_x + obj.x / obj.z * fx
             fx = self.K[0, 0]
             fy = self.K[1, 1]
+            cx = self.K[0, 2]
+            cy = self.K[1, 2]
 
             if obj.z <= 0:
                 return canvas
 
-            # 2D position on image
-            screen_x = center_x + obj.x / obj.z * fx
-            screen_y = center_y - (h * 0.4) * (obj.z / self.max_range)
+            # Define 3D bounding box corners (in camera frame)
+            # Object center at (obj.x, obj.y, obj.z)
+            # Dimensions: width, depth, height
+            half_w = obj.width / 2
+            half_d = obj.depth / 2
+            half_h = obj.height / 2
 
-            # Clamp to image bounds
-            if screen_x < 0 or screen_x >= w or screen_y < 0 or screen_y >= h:
-                return canvas
+            corners_3d = np.array([
+                # Bottom face (y = obj.y - half_h)
+                [obj.x - half_w, obj.y - half_h, obj.z + half_d],
+                [obj.x + half_w, obj.y - half_h, obj.z + half_d],
+                [obj.x + half_w, obj.y - half_h, obj.z - half_d],
+                [obj.x - half_w, obj.y - half_h, obj.z - half_d],
+                # Top face (y = obj.y + half_h)
+                [obj.x - half_w, obj.y + half_h, obj.z + half_d],
+                [obj.x + half_w, obj.y + half_h, obj.z + half_d],
+                [obj.x + half_w, obj.y + half_h, obj.z - half_d],
+                [obj.x - half_w, obj.y + half_h, obj.z - half_d],
+            ], dtype=np.float32)
 
-            # Draw box (as a rectangle on the ground)
-            box_size = int(obj.width / obj.z * fx)
-            box_depth = int(obj.depth / obj.z * fy)
+            # Project to 2D
+            points_2d = []
+            for corner in corners_3d:
+                x, y, z = corner
+                if z <= 0:  # Behind camera
+                    points_2d.append(None)
+                else:
+                    px = cx + (x / z) * fx
+                    py = cy - (y / z) * fy
+                    points_2d.append((int(px), int(py)))
 
-            x1 = int(screen_x - box_size // 2)
-            y1 = int(screen_y - box_depth // 2)
-            x2 = int(screen_x + box_size // 2)
-            y2 = int(screen_y + box_depth // 2)
-
-            # Draw bounding box
+            # Draw edges if all points are valid
             color = (0, 255, 0) if obj.confidence > 0.5 else (0, 165, 255)
-            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
 
-            # Draw label with distance
-            label = f"{obj.label} {obj.z:.1f}m"
-            cv2.putText(canvas, label, (x1, y1 - 5),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+            if all(p is not None for p in points_2d):
+                # Bottom face
+                cv2.line(canvas, points_2d[0], points_2d[1], color, 2)
+                cv2.line(canvas, points_2d[1], points_2d[2], color, 2)
+                cv2.line(canvas, points_2d[2], points_2d[3], color, 2)
+                cv2.line(canvas, points_2d[3], points_2d[0], color, 2)
 
-            # Draw center point
-            cv2.circle(canvas, (int(screen_x), int(screen_y)), 3, color, -1)
+                # Top face
+                cv2.line(canvas, points_2d[4], points_2d[5], color, 2)
+                cv2.line(canvas, points_2d[5], points_2d[6], color, 2)
+                cv2.line(canvas, points_2d[6], points_2d[7], color, 2)
+                cv2.line(canvas, points_2d[7], points_2d[4], color, 2)
+
+                # Vertical edges
+                cv2.line(canvas, points_2d[0], points_2d[4], color, 2)
+                cv2.line(canvas, points_2d[1], points_2d[5], color, 2)
+                cv2.line(canvas, points_2d[2], points_2d[6], color, 2)
+                cv2.line(canvas, points_2d[3], points_2d[7], color, 2)
+
+            # Draw center point and label
+            center_2d = np.mean([p for p in points_2d if p is not None], axis=0)
+            if len([p for p in points_2d if p is not None]) > 0:
+                cv2.circle(canvas, tuple(center_2d.astype(int)), 5, color, -1)
+
+                # Label with distance and confidence
+                label = f"{obj.label} {obj.z:.1f}m (conf: {obj.confidence:.1f})"
+                cv2.putText(canvas, label, (int(center_2d[0]) - 50, int(center_2d[1]) - 15),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
             return canvas
         except Exception as e:
