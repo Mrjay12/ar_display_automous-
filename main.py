@@ -51,6 +51,11 @@ Examples:
         metavar="SECONDS",
         help="Duration for spatial visualization (default: 60 seconds, 0 = infinite)",
     )
+    parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="Show camera diagnostic information",
+    )
 
     args = parser.parse_args()
 
@@ -74,6 +79,12 @@ Examples:
         logger.info("\n[TEST] Device Detection Test")
         logger.info("-" * 70)
         return 0 if run_device_detection_test() else 1
+
+    # Show diagnostics if requested
+    if args.diagnose:
+        logger.info("\n[DIAGNOSE] Camera Diagnostic Information")
+        logger.info("-" * 70)
+        return 0 if run_camera_diagnostics() else 1
 
     # If --duration is specified, run spatial visualization
     logger.info(f"\n[VISUALIZATION] Running spatial visualization for {args.duration} seconds...")
@@ -102,6 +113,53 @@ def run_device_detection_test():
 
     except Exception as e:
         logger.error(f"Device detection failed: {e}")
+        return False
+
+
+def run_camera_diagnostics():
+    """Run camera diagnostics to see what's happening."""
+    logger = get_logger(__name__)
+    try:
+        from camera.oak_d_interface import OAKDInterface
+        import json
+
+        logger.info("Initializing camera for diagnostics...")
+        camera = OAKDInterface()
+        if not camera.initialize():
+            logger.error("Failed to initialize camera")
+            return False
+
+        logger.info("Camera initialized. Checking diagnostics...")
+        diag = camera.diagnose()
+
+        logger.info("\n=== CAMERA DIAGNOSTICS ===")
+        logger.info(json.dumps(diag, indent=2, default=str))
+
+        logger.info("\n=== FRAME CAPTURE TEST ===")
+        logger.info("Attempting to capture 10 frames...")
+
+        frame_count = 0
+        for i in range(10):
+            rgbd = camera.get_rgbd_frame(timeout_ms=500)
+            if rgbd is not None:
+                frame_count += 1
+                logger.info(f"  Frame {frame_count}: RGB={rgbd.rgb.shape}, Depth={rgbd.depth.shape}")
+            else:
+                logger.warning(f"  Attempt {i+1}: No frame available")
+            time.sleep(0.1)
+
+        logger.info(f"\n✓ Successfully captured {frame_count}/10 frames")
+
+        final_diag = camera.diagnose()
+        logger.info("\n=== FINAL DIAGNOSTICS ===")
+        logger.info(json.dumps(final_diag, indent=2, default=str))
+
+        camera.shutdown()
+        logger.info("\n✓ Camera diagnostics complete")
+        return True
+
+    except Exception as e:
+        logger.exception(f"Camera diagnostics failed: {e}")
         return False
 
 

@@ -809,6 +809,30 @@ class OAKDInterface:
             "rgbd_frames": self.rgbd_frame_id,
         }
 
+    def diagnose(self) -> dict[str, Any]:
+        """Return detailed diagnostic information."""
+
+        diagnostics = {
+            "initialized": self._initialized,
+            "pipeline_started": self._pipeline_started,
+            "pipeline": self.pipeline is not None,
+            "device": self.device is not None,
+            "rgbd_queue": self.rgbd_queue is not None,
+            "calibration": self.calibration is not None,
+            "device_info": self.device_info,
+            "stats": self.get_statistics(),
+        }
+
+        # Try to check queue status
+        if self.rgbd_queue is not None:
+            try:
+                msg = self.rgbd_queue.tryGet()
+                diagnostics["queue_has_data"] = msg is not None
+            except Exception as e:
+                diagnostics["queue_error"] = str(e)
+
+        return diagnostics
+
     # ========================================================================
     # SHUTDOWN
     # ========================================================================
