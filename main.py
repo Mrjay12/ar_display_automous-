@@ -177,27 +177,37 @@ def run_spatial_visualization(duration_sec=60):
             logger.error("Failed to initialize camera")
             return False
 
+        # Get first frame to determine actual RGB resolution
+        first_frame = camera.get_rgbd_frame(timeout_ms=1000)
+        if first_frame is None:
+            logger.error("Failed to get first frame for resolution detection")
+            return False
+
+        rgb_height, rgb_width = first_frame.rgb.shape[:2]
+        depth_height, depth_width = first_frame.depth.shape[:2]
+        logger.info(f"Detected resolutions: RGB={rgb_width}×{rgb_height}, Depth={depth_width}×{depth_height}")
+
         # Get camera calibration (always available with defaults)
         calibration = camera.get_calibration()
         if calibration is None:
             logger.warning("Camera calibration not available, using defaults")
-            # Create fallback calibration
+            # Create fallback calibration for actual RGB resolution
             import numpy as np
-            width, height = 1280, 720
-            fx = width * 1.08
-            fy = height * 1.08
+            fx = rgb_width * 1.08
+            fy = rgb_height * 1.08
             calibration = np.array([
-                [fx, 0, width/2],
-                [0, fy, height/2],
+                [fx, 0, rgb_width/2],
+                [0, fy, rgb_height/2],
                 [0, 0, 1],
             ], dtype=np.float32)
+            logger.info(f"Using default calibration for {rgb_width}×{rgb_height}")
 
-        # Initialize spatial visualizer
+        # Initialize spatial visualizer with ACTUAL RGB dimensions
         logger.info("Initializing spatial visualizer...")
         visualizer = SpatialVisualizer(
             camera_matrix=calibration,
-            image_width=640,
-            image_height=360
+            image_width=rgb_width,
+            image_height=rgb_height
         )
 
         logger.info(f"Starting spatial visualization for {duration_sec}s")
@@ -227,6 +237,13 @@ def run_spatial_visualization(duration_sec=60):
                 # Extract depth and RGB
                 depth_array = rgbd_frame.depth
                 rgb_data = rgbd_frame.rgb
+
+                # Resize depth to match RGB resolution for proper overlay
+                import cv2
+                if depth_array.shape[:2] != rgb_data.shape[:2]:
+                    depth_array = cv2.resize(depth_array,
+                                            (rgb_data.shape[1], rgb_data.shape[0]),
+                                            interpolation=cv2.INTER_LINEAR)
 
                 # Process depth and detect objects
                 objects = visualizer.process_depth_frame(depth_array)
