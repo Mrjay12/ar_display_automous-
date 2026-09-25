@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class CameraFrame:
-    """RGB camera frame."""
+    """Left stereo camera frame (grayscale)."""
 
     timestamp_us: int
     frame: np.ndarray
@@ -57,9 +57,10 @@ class StereoDepth:
 @dataclass
 class RGBDFrame:
     """
-    Synchronized RGB + depth frame.
+    Synchronized left camera + depth frame.
 
-    The depth image is aligned to the RGB image.
+    The depth image is aligned to the left stereo camera image.
+    Left camera is grayscale for stereo baseline.
     """
 
     timestamp_us: int
@@ -74,19 +75,18 @@ class RGBDFrame:
 
 class OAKDInterface:
     """
-    OAK-D Pro interface for DepthAI 3.x.
+    OAK-D Pro interface for DepthAI 3.x - Stereo-only spatial pipeline.
 
     Standard OAK-D camera layout:
 
-        CAM_A -> RGB
-        CAM_B -> LEFT mono
-        CAM_C -> RIGHT mono
+        CAM_B -> LEFT mono (visualization + stereo baseline)
+        CAM_C -> RIGHT mono (stereo pair for depth)
 
     Pipeline:
 
-        RGB
+        LEFT
           \
-           -> Sync -> RGBDFrame
+           -> Sync -> RGBDFrame (left-aligned depth)
           /
         Stereo -> ImageAlign
     """
@@ -254,37 +254,18 @@ class OAKDInterface:
             self.pipeline = dai.Pipeline()
 
             # =================================================================
-            # RGB CAMERA
+            # LEFT CAMERA (for visualization background)
             # =================================================================
 
-            rgb_camera = self.pipeline.create(
+            left_mono = self.pipeline.create(
                 dai.node.Camera
             )
 
-            rgb_camera.build(
-                dai.CameraBoardSocket.CAM_A
-            )
-
-            rgb_output = rgb_camera.requestOutput(
-                size=(1280, 720),
-                type=dai.ImgFrame.Type.BGR888p,
-                resizeMode=dai.ImgResizeMode.CROP,
-                fps=30,
-            )
-
-            # =================================================================
-            # LEFT CAMERA
-            # =================================================================
-
-            left_camera = self.pipeline.create(
-                dai.node.Camera
-            )
-
-            left_camera.build(
+            left_mono.build(
                 dai.CameraBoardSocket.CAM_B
             )
 
-            left_output = left_camera.requestOutput(
+            left_output = left_mono.requestOutput(
                 size=(640, 400),
                 type=dai.ImgFrame.Type.GRAY8,
                 resizeMode=dai.ImgResizeMode.CROP,
@@ -292,18 +273,18 @@ class OAKDInterface:
             )
 
             # =================================================================
-            # RIGHT CAMERA
+            # RIGHT CAMERA (for stereo pair)
             # =================================================================
 
-            right_camera = self.pipeline.create(
+            right_mono = self.pipeline.create(
                 dai.node.Camera
             )
 
-            right_camera.build(
+            right_mono.build(
                 dai.CameraBoardSocket.CAM_C
             )
 
-            right_output = right_camera.requestOutput(
+            right_output = right_mono.requestOutput(
                 size=(640, 400),
                 type=dai.ImgFrame.Type.GRAY8,
                 resizeMode=dai.ImgResizeMode.CROP,
@@ -311,7 +292,7 @@ class OAKDInterface:
             )
 
             # =================================================================
-            # STEREO DEPTH
+            # STEREO DEPTH (spatial detection)
             # =================================================================
 
             stereo = self.pipeline.create(
@@ -394,13 +375,13 @@ class OAKDInterface:
                 image_align.input
             )
 
-            # RGB determines target alignment.
-            rgb_output.link(
+            # Left camera determines target alignment.
+            left_output.link(
                 image_align.inputAlignTo
             )
 
             # =================================================================
-            # RGB + DEPTH SYNCHRONIZATION
+            # LEFT + DEPTH SYNCHRONIZATION
             # =================================================================
 
             sync = self.pipeline.create(
@@ -430,12 +411,12 @@ class OAKDInterface:
                     "Sync attempts configuration unavailable."
                 )
 
-            # RGB
-            rgb_output.link(
+            # Left camera (for visualization background)
+            left_output.link(
                 sync.inputs["rgb"]
             )
 
-            # RGB-aligned depth
+            # Left-aligned depth
             image_align.outputAligned.link(
                 sync.inputs["depth"]
             )
