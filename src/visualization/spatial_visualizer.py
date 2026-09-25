@@ -205,7 +205,7 @@ class SpatialVisualizer:
         return None
 
     def _draw_occupancy_grid(self, canvas: np.ndarray) -> np.ndarray:
-        """Draw octomap-style voxel grid visualization."""
+        """Draw octomap-style 3D bounding boxes for occupied regions."""
         try:
             if not self.occupancy_grid:
                 return canvas
@@ -213,7 +213,7 @@ class SpatialVisualizer:
             h, w = canvas.shape[:2]
             voxels = list(self.occupancy_grid.keys())
 
-            # Separate voxels by depth for layered rendering (far to near)
+            # Group voxels by object region for cleaner visualization
             voxels_by_depth = {}
             for vx, vy, vz in voxels:
                 depth_bin = int(vz / 0.5)  # Group by 0.5m depth
@@ -221,46 +221,40 @@ class SpatialVisualizer:
                     voxels_by_depth[depth_bin] = []
                 voxels_by_depth[depth_bin].append((vx, vy, vz))
 
-            # Draw voxels from far to near (proper occlusion)
+            # Draw from far to near
             for depth_bin in sorted(voxels_by_depth.keys(), reverse=True):
                 voxel_group = voxels_by_depth[depth_bin]
 
                 for vx, vy, vz in voxel_group:
-                    # Project voxel corners to 2D to visualize as small boxes
+                    # Project voxel bounding box corners to 2D
                     voxel_corners_3d = self._get_voxel_corners(vx, vy, vz)
                     voxel_corners_2d = []
 
                     for corner_3d in voxel_corners_3d:
                         corner_2d = self._voxel_to_2d(corner_3d)
                         if corner_2d is not None:
-                            voxel_corners_2d.append(corner_2d)
+                            voxel_corners_2d.append((corner_2d, corner_3d))
 
-                    # Draw voxel if at least some corners project into frame
-                    if len(voxel_corners_2d) >= 2:
-                        # Draw voxel as small point/circle with slight transparency
-                        # Use gradient color based on distance (blue=far, red=near)
+                    # Only draw if center projects into frame
+                    center_3d = np.array([vx, vy, vz])
+                    center_2d = self._voxel_to_2d(center_3d)
+
+                    if center_2d is not None and len(voxel_corners_2d) >= 4:
                         occupancy = self.occupancy_grid[(vx, vy, vz)]
-                        intensity = int(200 * occupancy)
 
-                        if vz < 2.0:  # Near: more red
-                            color = (50, 100, intensity)
-                        elif vz < 5.0:  # Mid: more yellow
-                            color = (100, intensity, 100)
-                        else:  # Far: more blue
-                            color = (intensity, 100, 50)
+                        # Color based on distance
+                        if vz < 1.5:
+                            color = (0, 0, 220)  # Red (near)
+                        elif vz < 3.0:
+                            color = (0, 220, 220)  # Yellow (mid)
+                        else:
+                            color = (220, 0, 0)  # Blue (far)
 
-                        # Draw center point of voxel
-                        center_3d = np.array([vx, vy, vz])
-                        center_2d = self._voxel_to_2d(center_3d)
-                        if center_2d is not None:
-                            # Size based on distance (farther = smaller)
-                            radius = max(1, int(3.0 / (1.0 + vz / 5.0)))
-                            cv2.circle(canvas, center_2d, radius, color, -1)
+                        # Draw voxel wireframe - larger and more visible
+                        self._draw_voxel_wireframe(canvas, voxel_corners_3d, color, thickness=2)
 
-                            # Draw voxel wireframe if corners are visible
-                            if len(voxel_corners_2d) >= 4:
-                                # Draw edges between corners (simplified wireframe)
-                                self._draw_voxel_wireframe(canvas, voxel_corners_3d, color)
+                        # Draw center point as larger circle
+                        cv2.circle(canvas, center_2d, 6, color, -1)
 
             return canvas
 
@@ -282,9 +276,10 @@ class SpatialVisualizer:
         self,
         canvas: np.ndarray,
         corners_3d: List[np.ndarray],
-        color: Tuple[int, int, int]
+        color: Tuple[int, int, int],
+        thickness: int = 1
     ) -> None:
-        """Draw wireframe edges of a voxel."""
+        """Draw wireframe edges of a voxel cube."""
         # Define 12 edges of a cube (pairs of corner indices)
         edges = [
             (0, 1), (1, 3), (3, 2), (2, 0),  # Bottom face
@@ -297,7 +292,7 @@ class SpatialVisualizer:
             p2_2d = self._voxel_to_2d(corners_3d[j])
 
             if p1_2d is not None and p2_2d is not None:
-                cv2.line(canvas, p1_2d, p2_2d, color, 1)
+                cv2.line(canvas, p1_2d, p2_2d, color, thickness)
 
     def _depth_to_points(self, depth_frame: np.ndarray) -> np.ndarray:
         """Convert depth map to 3D point cloud."""
