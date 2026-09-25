@@ -274,7 +274,6 @@ class OAKDInterface:
                 type=dai.ImgFrame.Type.BGR888p,
                 resizeMode=dai.ImgResizeMode.CROP,
                 fps=30,
-                enableUndistortion=True,
             )
 
             # =================================================================
@@ -387,24 +386,6 @@ class OAKDInterface:
             )
 
             # =================================================================
-            # DEPTH ALIGNMENT
-            # =================================================================
-
-            image_align = self.pipeline.create(
-                dai.node.ImageAlign
-            )
-
-            # Stereo depth becomes ImageAlign input.
-            stereo.depth.link(
-                image_align.input
-            )
-
-            # RGB camera determines target alignment.
-            rgb_output.link(
-                image_align.inputAlignTo
-            )
-
-            # =================================================================
             # RGB + DEPTH SYNCHRONIZATION
             # =================================================================
 
@@ -440,8 +421,10 @@ class OAKDInterface:
                 sync.inputs["rgb"]
             )
 
-            # RGB-aligned depth (spatial information)
-            image_align.outputAligned.link(
+            # Stereo depth (spatial information)
+            # Skipping ImageAlign to avoid cross-camera distortion issues.
+            # Spatial visualizer handles coordinate transformation.
+            stereo.depth.link(
                 sync.inputs["depth"]
             )
 
