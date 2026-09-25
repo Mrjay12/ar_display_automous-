@@ -119,12 +119,20 @@ def run_spatial_visualization(duration_sec=60):
             logger.error("Failed to initialize camera")
             return False
 
-        # Get camera calibration
+        # Get camera calibration (always available with defaults)
         calibration = camera.get_calibration()
         if calibration is None:
-            logger.error("Failed to get camera calibration")
-            camera.shutdown()
-            return False
+            logger.warning("Camera calibration not available, using defaults")
+            # Create fallback calibration
+            import numpy as np
+            width, height = 1280, 720
+            fx = width * 1.08
+            fy = height * 1.08
+            calibration = np.array([
+                [fx, 0, width/2],
+                [0, fy, height/2],
+                [0, 0, 1],
+            ], dtype=np.float32)
 
         # Initialize spatial visualizer
         logger.info("Initializing spatial visualizer...")
