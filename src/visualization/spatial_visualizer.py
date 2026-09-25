@@ -720,21 +720,22 @@ class SpatialVisualizer:
         num_objects: int,
         depth_frame: np.ndarray
     ) -> np.ndarray:
-        """Draw information overlay on canvas."""
+        """Draw information overlay on canvas (semi-transparent, minimal)."""
         try:
             h, w = canvas.shape[:2]
 
-            # Background for text
-            cv2.rectangle(canvas, (5, 5), (400, 140), (0, 0, 0), -1)
-            cv2.rectangle(canvas, (5, 5), (400, 140), (0, 255, 0), 2)
+            # Semi-transparent background for text (minimal size)
+            overlay = canvas.copy()
+            cv2.rectangle(overlay, (5, 5), (320, 85), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.3, canvas, 0.7, 0, canvas)
 
-            # Info text
+            # Border
+            cv2.rectangle(canvas, (5, 5), (320, 85), (0, 255, 0), 1)
+
+            # Info text - compact format
             lines = [
-                f"Spatial Visualization - Objects: {num_objects}",
-                f"Point Cloud: {self._last_point_cloud_count:,} points",
-                f"Range: 0.2m - {self.max_range}m",
-                f"FOV: {self.fov_degrees}°",
-                f"Grid: {self.grid_size}m cells",
+                f"Objects: {num_objects} | Points: {self._last_point_cloud_count:,}",
+                f"Range: 0.2m-{self.max_range}m | FOV: {self.fov_degrees}°",
             ]
 
             if depth_frame is not None:
@@ -745,7 +746,7 @@ class SpatialVisualizer:
 
             for i, line in enumerate(lines):
                 cv2.putText(canvas, line, (15, 25 + i * 18),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
 
             return canvas
         except Exception as e:
