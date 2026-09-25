@@ -239,7 +239,7 @@ class SpatialVisualizer:
             height_range = max_height - min_height if max_height > min_height else 1.0
 
             # Downsample for performance (render every Nth point)
-            downsample = 4
+            downsample = 2
             indices = np.arange(0, len(x_3d), downsample)
 
             # Draw each point colored by height
@@ -274,7 +274,7 @@ class SpatialVisualizer:
                 color = (b, g, r)
 
                 # Draw point at pixel location
-                cv2.circle(canvas, (int(ux), int(uy)), 2, color, -1)
+                cv2.circle(canvas, (int(ux), int(uy)), 3, color, -1)
 
             return canvas
 
