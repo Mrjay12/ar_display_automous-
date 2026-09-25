@@ -178,14 +178,25 @@ def run_spatial_visualization(duration_sec=60):
             return False
 
         # Get first frame to determine actual RGB resolution
-        first_frame = camera.get_rgbd_frame(timeout_ms=1000)
+        # Try multiple times with longer timeout as camera may need time to warm up
+        logger.info("Waiting for camera to produce frames...")
+        first_frame = None
+        for attempt in range(5):
+            first_frame = camera.get_rgbd_frame(timeout_ms=2000)
+            if first_frame is not None:
+                logger.info(f"Frame obtained on attempt {attempt + 1}")
+                break
+            logger.warning(f"  Attempt {attempt + 1}/5: No frame, retrying...")
+            time.sleep(0.5)
+
         if first_frame is None:
-            logger.error("Failed to get first frame for resolution detection")
+            logger.error("Failed to get first frame after 5 attempts")
+            camera.shutdown()
             return False
 
         rgb_height, rgb_width = first_frame.rgb.shape[:2]
         depth_height, depth_width = first_frame.depth.shape[:2]
-        logger.info(f"Detected resolutions: RGB={rgb_width}×{rgb_height}, Depth={depth_width}×{depth_height}")
+        logger.info(f"Detected resolutions: RGB={rgb_width}x{rgb_height}, Depth={depth_width}x{depth_height}")
 
         # Get camera calibration (always available with defaults)
         calibration = camera.get_calibration()
@@ -239,7 +250,6 @@ def run_spatial_visualization(duration_sec=60):
                 rgb_data = rgbd_frame.rgb
 
                 # Resize depth to match RGB resolution for proper overlay
-                import cv2
                 if depth_array.shape[:2] != rgb_data.shape[:2]:
                     depth_array = cv2.resize(depth_array,
                                             (rgb_data.shape[1], rgb_data.shape[0]),
