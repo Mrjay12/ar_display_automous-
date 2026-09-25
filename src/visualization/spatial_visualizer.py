@@ -34,7 +34,7 @@ class SpatialObject:
 
 
 class SpatialVisualizer:
-    """Render 3D spatial visualization with ground plane reference."""
+    """Render 3D spatial visualization with octomap-style voxel grid."""
 
     def __init__(self, camera_matrix: np.ndarray, image_width: int = 640, image_height: int = 360):
         """
@@ -52,17 +52,21 @@ class SpatialVisualizer:
         # Default local origin (Minsk, Belarus example from current system)
         self.local_origin = (53.9045, 27.5615, 125.5)
 
-        # Ground plane configuration
-        self.ground_plane_distance = 5.0  # Look 5m ahead
-        self.grid_size = 0.5  # 0.5m grid cells
+        # Octomap voxel grid configuration
+        self.voxel_size = 0.1  # 0.1m voxel size for detailed grid
+        self.grid_size = 0.5  # 0.5m grid cells for visualization
         self.max_range = 10.0  # Max detection range
+        self.grid_width = 4.0  # ±2m width
+
+        # Occupancy grid: tracks which voxels are occupied
+        self.occupancy_grid = {}  # {(x, y, z): occupancy_probability}
 
         # Visualization parameters
         self.fov_degrees = 60.0
         self.show_grid = True
         self.show_debug = False
 
-        logger.info("SpatialVisualizer initialized")
+        logger.info("SpatialVisualizer initialized with octomap voxel grid")
 
     def process_depth_frame(self, depth_frame: np.ndarray) -> List[SpatialObject]:
         """
@@ -90,6 +94,36 @@ class SpatialVisualizer:
         except Exception as e:
             logger.error(f"Depth processing failed: {e}")
             return []
+
+    def _build_occupancy_grid(self, objects: List[SpatialObject]) -> None:
+        """Build 3D occupancy grid from detected objects."""
+        self.occupancy_grid.clear()
+
+        for obj in objects:
+            if obj.z <= 0:
+                continue
+
+            # Mark voxels occupied within object bounding box
+            half_w = obj.width / 2
+            half_d = obj.depth / 2
+            half_h = obj.height / 2
+
+            # Voxel grid from object bounds
+            x_min = obj.x - half_w
+            x_max = obj.x + half_w
+            z_min = obj.z - half_d
+            z_max = obj.z + half_d
+            y_min = obj.y - half_h
+            y_max = obj.y + half_h
+
+            # Quantize to voxel grid
+            for x in np.arange(x_min, x_max, self.voxel_size):
+                for z in np.arange(z_min, z_max, self.voxel_size):
+                    for y in np.arange(y_min, y_max, self.voxel_size):
+                        voxel_key = (round(x / self.voxel_size) * self.voxel_size,
+                                    round(y / self.voxel_size) * self.voxel_size,
+                                    round(z / self.voxel_size) * self.voxel_size)
+                        self.occupancy_grid[voxel_key] = 1.0  # Occupied
 
     def render_frame(
         self,
@@ -122,6 +156,10 @@ class SpatialVisualizer:
             if self.show_grid:
                 canvas = self._draw_ground_grid(canvas, depth_frame)
 
+            # Build and draw occupancy grid (octomap-style voxel visualization)
+            self._build_occupancy_grid(objects)
+            canvas = self._draw_occupancy_grid(canvas)
+
             # Draw detected objects
             for obj in objects:
                 canvas = self._draw_object_box(canvas, obj, depth_frame)
@@ -134,6 +172,132 @@ class SpatialVisualizer:
         except Exception as e:
             logger.error(f"Frame rendering failed: {e}")
             return rgb_frame
+
+    def _voxel_to_2d(self, voxel_3d: np.ndarray) -> Optional[Tuple[int, int]]:
+        """
+        Project a 3D voxel coordinate to 2D image pixel.
+
+        Args:
+            voxel_3d: 3D point (x, y, z) in meters
+
+        Returns:
+            Tuple of (u, v) pixel coordinates or None if out of frame
+        """
+        x, y, z = voxel_3d
+
+        # Skip points behind camera
+        if z <= 0.1:
+            return None
+
+        fx = self.K[0, 0]
+        fy = self.K[1, 1]
+        cx = self.K[0, 2]
+        cy = self.K[1, 2]
+
+        # Project to image plane: (u,v) = (cx + fx*x/z, cy - fy*y/z)
+        u = cx + (x / z) * fx
+        v = cy - (y / z) * fy
+
+        # Check bounds
+        if 0 <= u < self.width and 0 <= v < self.height:
+            return (int(u), int(v))
+
+        return None
+
+    def _draw_occupancy_grid(self, canvas: np.ndarray) -> np.ndarray:
+        """Draw octomap-style voxel grid visualization."""
+        try:
+            if not self.occupancy_grid:
+                return canvas
+
+            h, w = canvas.shape[:2]
+            voxels = list(self.occupancy_grid.keys())
+
+            # Separate voxels by depth for layered rendering (far to near)
+            voxels_by_depth = {}
+            for vx, vy, vz in voxels:
+                depth_bin = int(vz / 0.5)  # Group by 0.5m depth
+                if depth_bin not in voxels_by_depth:
+                    voxels_by_depth[depth_bin] = []
+                voxels_by_depth[depth_bin].append((vx, vy, vz))
+
+            # Draw voxels from far to near (proper occlusion)
+            for depth_bin in sorted(voxels_by_depth.keys(), reverse=True):
+                voxel_group = voxels_by_depth[depth_bin]
+
+                for vx, vy, vz in voxel_group:
+                    # Project voxel corners to 2D to visualize as small boxes
+                    voxel_corners_3d = self._get_voxel_corners(vx, vy, vz)
+                    voxel_corners_2d = []
+
+                    for corner_3d in voxel_corners_3d:
+                        corner_2d = self._voxel_to_2d(corner_3d)
+                        if corner_2d is not None:
+                            voxel_corners_2d.append(corner_2d)
+
+                    # Draw voxel if at least some corners project into frame
+                    if len(voxel_corners_2d) >= 2:
+                        # Draw voxel as small point/circle with slight transparency
+                        # Use gradient color based on distance (blue=far, red=near)
+                        occupancy = self.occupancy_grid[(vx, vy, vz)]
+                        intensity = int(200 * occupancy)
+
+                        if vz < 2.0:  # Near: more red
+                            color = (50, 100, intensity)
+                        elif vz < 5.0:  # Mid: more yellow
+                            color = (100, intensity, 100)
+                        else:  # Far: more blue
+                            color = (intensity, 100, 50)
+
+                        # Draw center point of voxel
+                        center_3d = np.array([vx, vy, vz])
+                        center_2d = self._voxel_to_2d(center_3d)
+                        if center_2d is not None:
+                            # Size based on distance (farther = smaller)
+                            radius = max(1, int(3.0 / (1.0 + vz / 5.0)))
+                            cv2.circle(canvas, center_2d, radius, color, -1)
+
+                            # Draw voxel wireframe if corners are visible
+                            if len(voxel_corners_2d) >= 4:
+                                # Draw edges between corners (simplified wireframe)
+                                self._draw_voxel_wireframe(canvas, voxel_corners_3d, color)
+
+            return canvas
+
+        except Exception as e:
+            logger.warning(f"Occupancy grid drawing failed: {e}")
+            return canvas
+
+    def _get_voxel_corners(self, vx: float, vy: float, vz: float) -> List[np.ndarray]:
+        """Get 8 corner points of a voxel in 3D."""
+        half_size = self.voxel_size / 2
+        corners = []
+        for dx in [-half_size, half_size]:
+            for dy in [-half_size, half_size]:
+                for dz in [-half_size, half_size]:
+                    corners.append(np.array([vx + dx, vy + dy, vz + dz]))
+        return corners
+
+    def _draw_voxel_wireframe(
+        self,
+        canvas: np.ndarray,
+        corners_3d: List[np.ndarray],
+        color: Tuple[int, int, int]
+    ) -> None:
+        """Draw wireframe edges of a voxel."""
+        # Define 12 edges of a cube (pairs of corner indices)
+        edges = [
+            (0, 1), (1, 3), (3, 2), (2, 0),  # Bottom face
+            (4, 5), (5, 7), (7, 6), (6, 4),  # Top face
+            (0, 4), (1, 5), (2, 6), (3, 7)   # Vertical edges
+        ]
+
+        for i, j in edges:
+            p1_2d = self._voxel_to_2d(corners_3d[i])
+            p2_2d = self._voxel_to_2d(corners_3d[j])
+
+            if p1_2d is not None and p2_2d is not None:
+                cv2.line(canvas, p1_2d, p2_2d, color, 1)
 
     def _depth_to_points(self, depth_frame: np.ndarray) -> np.ndarray:
         """Convert depth map to 3D point cloud."""
