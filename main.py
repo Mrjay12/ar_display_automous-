@@ -215,31 +215,23 @@ def run_spatial_visualization(duration_sec=60):
                 break
 
             if not paused:
-                # Get frames from camera
-                rgb_frame = camera.get_rgb_frame()
-                depth_frame = camera.get_depth_frame()
+                # Get synchronized RGB+Depth frame
+                rgbd_frame = camera.get_rgbd_frame()
 
-                if rgb_frame is None or depth_frame is None:
+                if rgbd_frame is None:
                     logger.warning("Failed to get frames from camera")
                     continue
 
                 frame_count += 1
 
-                # Convert depth frame to array
-                if hasattr(depth_frame, 'depth_map'):
-                    depth_array = depth_frame.depth_map
-                else:
-                    depth_array = depth_frame
+                # Extract depth and RGB
+                depth_array = rgbd_frame.depth
+                rgb_data = rgbd_frame.rgb
 
                 # Process depth and detect objects
                 objects = visualizer.process_depth_frame(depth_array)
 
                 # Render visualization
-                if hasattr(rgb_frame, 'frame'):
-                    rgb_data = rgb_frame.frame
-                else:
-                    rgb_data = rgb_frame
-
                 visualized = visualizer.render_frame(rgb_data, depth_array, objects)
 
                 # Display
