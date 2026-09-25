@@ -104,11 +104,11 @@ def run_device_detection_test():
         device = OAKDInterface()
         elapsed = time.time() - start_time
 
-        logger.info(f"✓ Device detected in {elapsed:.2f} seconds")
+        logger.info(f"[OK] Device detected in {elapsed:.2f} seconds")
         logger.info(f"  Device Info: {device.get_device_info()}")
 
         device.shutdown()
-        logger.info("✓ Device initialized and shut down successfully")
+        logger.info("[OK] Device initialized and shut down successfully")
         return True
 
     except Exception as e:
@@ -148,14 +148,14 @@ def run_camera_diagnostics():
                 logger.warning(f"  Attempt {i+1}: No frame available")
             time.sleep(0.1)
 
-        logger.info(f"\n✓ Successfully captured {frame_count}/10 frames")
+        logger.info(f"\n[OK] Successfully captured {frame_count}/10 frames")
 
         final_diag = camera.diagnose()
         logger.info("\n=== FINAL DIAGNOSTICS ===")
         logger.info(json.dumps(final_diag, indent=2, default=str))
 
         camera.shutdown()
-        logger.info("\n✓ Camera diagnostics complete")
+        logger.info("\n[OK] Camera diagnostics complete")
         return True
 
     except Exception as e:
@@ -293,7 +293,7 @@ def run_spatial_visualization(duration_sec=60):
         camera.shutdown()
 
         logger.info("=" * 70)
-        logger.info(f"✓ Spatial visualization complete: {frame_count} frames processed")
+        logger.info(f"[OK] Spatial visualization complete: {frame_count} frames processed")
         return True
 
     except Exception as e:
