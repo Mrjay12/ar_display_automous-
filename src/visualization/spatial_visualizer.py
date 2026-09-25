@@ -72,8 +72,9 @@ class SpatialVisualizer:
 
         # Visualization parameters
         self.fov_degrees = 60.0
-        self.show_grid = True
+        self.show_grid = False  # Hide grid by default for clean visualization (press 'g' to toggle)
         self.show_debug = False
+        self.show_info = False  # Hide info overlay by default
         self._last_point_cloud_count = 0
 
         logger.info("SpatialVisualizer initialized with octomap voxel grid")
@@ -180,8 +181,9 @@ class SpatialVisualizer:
             for obj in objects:
                 canvas = self._draw_object_box(canvas, obj, depth_frame)
 
-            # Draw info text
-            canvas = self._draw_info_overlay(canvas, len(objects), depth_frame)
+            # Draw info text (optional - press 'i' to toggle)
+            if self.show_info:
+                canvas = self._draw_info_overlay(canvas, len(objects), depth_frame)
 
             return canvas
 
